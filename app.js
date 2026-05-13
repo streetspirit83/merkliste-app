@@ -232,10 +232,6 @@ const API = {
       avg_volume: num(j.average_volume),
       pos_52whigh: j.fifty_two_week ? num(j.fifty_two_week.high_change_percent) : null,
       pos_52low:   j.fifty_two_week ? num(j.fifty_two_week.low_change_percent)  : null,
-      rsi: null, macd: null, macd_signal: null, macd_histogram: null,
-      ma20: null, ma20_delta_pct: null,
-      ma50: null, ma50_delta_pct: null,
-      ma200: null, ma200_delta_pct: null,
       ts: Date.now(),
       _source: "twelvedata",
       _api_meta: {
@@ -491,10 +487,6 @@ const API = {
       avg_volume: num(q.averageDailyVolume3Month ?? q.avg_volume),
       pos_52whigh: num(q.fiftyTwoWeekHighChangePercent),
       pos_52low:   num(q.fiftyTwoWeekLowChangePercent),
-      rsi: null, macd: null, macd_signal: null, macd_histogram: null,
-      ma20: null, ma20_delta_pct: null,
-      ma50: null, ma50_delta_pct: null,
-      ma200: null, ma200_delta_pct: null,
       ts: Date.now(),
       _source: "yahoo",
       _api_meta: {
@@ -929,7 +921,7 @@ function cardNeutral(t) {
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
     <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>
+      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
       <span class="tcard__sep">|</span>${priceLine(t)}
       <span class="tcard__sep">|</span>${maChip("MA20", t.ma20_delta_pct)}
       <span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
@@ -945,7 +937,7 @@ function cardWatchlist(t) {
     ${selectChip(t)}
     <span class="tcard__flag" title="Watchlist"><i data-lucide="flag" class="icon icon-sm"></i></span>
     <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>
+      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
       <span class="tcard__sep">|</span>${priceLine(t)}
       <span class="tcard__sep">|</span>${maChip("MA20", t.ma20_delta_pct)}
       <span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
@@ -962,7 +954,7 @@ function cardPortfolio(t) {
     ${selectChip(t)}
     <span class="tcard__flag">${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}<i data-lucide="briefcase" class="icon icon-sm"></i></span>
     <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>
+      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
       <span class="tcard__sep">|</span>${plChip(t)}
       <span class="tcard__sep">|</span><span><span class="tcard__label">Preis</span>${numFmt(t.price)} <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>
     </div>
