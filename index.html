@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Merkliste</title>
+
+<!-- DM Sans + DM Mono -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<!-- Lucide icons -->
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ════════════ TOP BAR ════════════ -->
+  <header class="topbar" role="banner">
+    <div class="topbar__actions">
+      <button class="btn-icon" id="btn-config" aria-label="API Konfiguration">
+        <i data-lucide="settings" class="icon"></i>
+      </button>
+      <button class="btn-icon" id="btn-blob" aria-label="In Cloud sichern" title="Cloud-Save (Netlify Blob)">
+        <i data-lucide="cloud-upload" class="icon"></i>
+      </button>
+      <button class="btn-text" id="btn-json-export" aria-label="Export JSON in Zwischenablage" title="Export JSON">
+        <i data-lucide="download" class="icon icon-sm"></i>
+        <span class="btn-text__label">Export</span>
+      </button>
+      <button class="btn-text" id="btn-json-import" aria-label="JSON importieren" title="Import JSON">
+        <i data-lucide="upload" class="icon icon-sm"></i>
+        <span class="btn-text__label">Import</span>
+      </button>
+    </div>
+    <button class="btn-icon" id="menu-nav" aria-label="Navigation öffnen" aria-expanded="false" style="margin-left:auto">
+      <i data-lucide="menu" class="icon"></i>
+    </button>
+  </header>
+
+  <!-- ════════════ SUB BAR ════════════ -->
+  <div class="subbar" id="subbar" role="toolbar" aria-label="Ansichtssteuerung">
+    <div class="segment" role="group" aria-label="Ansicht">
+      <button class="segment__btn" id="btn-element-card-view" aria-pressed="true">
+        <i data-lucide="layout-grid" class="icon icon-sm"></i>
+        Karten
+      </button>
+      <button class="segment__btn" id="btn-element-table-view" aria-pressed="false">
+        <i data-lucide="table" class="icon icon-sm"></i>
+        Tabelle
+      </button>
+    </div>
+
+    <button class="filter-trig" id="btn-filter-trig" aria-pressed="false" title="Nur ausgelöste Alerts">
+      <i data-lucide="filter" class="icon icon-sm"></i>
+      Triggered
+    </button>
+
+    <div class="subbar__spacer"></div>
+
+    <div class="refresh-group">
+      <button class="btn-icon" id="btn-element-refresh" aria-label="Quick-Refresh aktueller Bucket" title="Quick-Refresh">
+        <i data-lucide="refresh-cw" class="icon"></i>
+      </button>
+      <button class="btn-icon" id="btn-element-fullrefresh" aria-label="Full-Refresh alle Buckets" title="Full-Refresh">
+        <i data-lucide="refresh-ccw-dot" class="icon"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- ════════════ CONTENT ════════════ -->
+  <main class="content" id="content">
+    <section id="view-screener" data-view="screener">
+      <div id="screener-card-view" class="card-list" data-bucket="portfolio"></div>
+      <div id="screener-table-view" data-bucket="portfolio" hidden>
+        <div class="tbl-wrap">
+          <table class="tbl" id="tbl-screener" aria-label="Screener Tabelle">
+            <thead><tr id="tbl-screener-head"></tr></thead>
+            <tbody id="tbl-screener-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ════════════ BULK BAR (sticky strip above bottom-nav, when selection > 0) ════════════ -->
+  <div class="bulkbar" id="bulkbar" role="toolbar" aria-label="Bulk-Aktionen">
+    <button class="bulkbar__btn bulkbar__btn--icon bulkbar__btn--del" id="bulk-delete" title="Ausgewählte löschen" aria-label="Löschen">
+      <i data-lucide="trash-2" class="icon icon-sm"></i>
+    </button>
+    <span class="bulkbar__count" id="bulk-count">0</span>
+    <div class="bulkbar__spacer"></div>
+    <button class="bulkbar__btn" id="bulk-to-portfolio" data-bucket="portfolio" title="In Portfolio verschieben">
+      <i data-lucide="briefcase" class="icon icon-sm"></i>
+      <span class="bulkbar__label">Portfolio</span>
+    </button>
+    <button class="bulkbar__btn" id="bulk-to-watchlist" data-bucket="watchlist" title="In Watchlist verschieben">
+      <i data-lucide="flag" class="icon icon-sm"></i>
+      <span class="bulkbar__label">Watchlist</span>
+    </button>
+    <button class="bulkbar__btn" id="bulk-to-neutral" data-bucket="neutral" title="In Neutral verschieben">
+      <i data-lucide="inbox" class="icon icon-sm"></i>
+      <span class="bulkbar__label">Neutral</span>
+    </button>
+    <span class="bulkbar__sep"></span>
+    <button class="bulkbar__btn" id="bulk-refresh" title="Quick-Refresh: nur Kurs" aria-label="Quick-Refresh">
+      <i data-lucide="refresh-cw" class="icon icon-sm"></i>
+      <span class="bulkbar__label">Quick</span>
+    </button>
+    <button class="bulkbar__btn bulkbar__btn--primary" id="bulk-refresh-full" title="Full-Refresh: Kurs + Historie für MA20/50/200 + RSI" aria-label="Full-Refresh">
+      <i data-lucide="database" class="icon icon-sm"></i>
+      <span class="bulkbar__label">Full</span>
+    </button>
+  </div>
+
+  <!-- ════════════ BOTTOM NAV ════════════ -->
+  <nav class="botnav" aria-label="Primär">
+    <button class="botnav__btn" id="nav-bottom-element-home" aria-current="true">
+      <i data-lucide="house" class="icon"></i>
+      <span class="botnav__label">Home</span>
+    </button>
+    <button class="botnav__btn" id="nav-bottom-element-alert">
+      <i data-lucide="bell" class="icon"></i>
+      <span class="botnav__label">Alerts</span>
+    </button>
+    <div class="select-wrap">
+      <select id="nav-bottom-element-dropdown" aria-label="Aktiver Bucket">
+        <option value="portfolio">Portfolio</option>
+        <option value="watchlist">Watchlist</option>
+        <option value="neutral">Neutral</option>
+      </select>
+      <i data-lucide="chevron-up" class="icon icon-sm select-wrap__chev"></i>
+    </div>
+  </nav>
+
+</div>
+
+<!-- ════════════ INFO MODAL ════════════ -->
+<div class="modal" id="modal-info" hidden role="dialog" aria-modal="true" aria-labelledby="modal-info-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-info-title">Details</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div id="modal-info-body"></div>
+  </div>
+</div>
+
+<!-- ════════════ EDIT MODAL ════════════ -->
+<div class="modal" id="modal-edit" hidden role="dialog" aria-modal="true" aria-labelledby="modal-edit-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-edit-title">Edit</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+
+    <div class="modal__row2">
+      <div class="modal__field">
+        <label for="edit-bucket">Bucket</label>
+        <select id="edit-bucket">
+          <option value="portfolio">Portfolio</option>
+          <option value="watchlist">Watchlist</option>
+          <option value="neutral">Neutral</option>
+        </select>
+      </div>
+      <div class="modal__field">
+        <label for="edit-priority">Priorität</label>
+        <select id="edit-priority">
+          <option value="">—</option>
+          <option value="hoch">Hoch</option>
+          <option value="mittel">Mittel</option>
+          <option value="niedrig">Niedrig</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="modal__row2">
+      <div class="modal__field">
+        <label for="edit-entry-price">Einstand €/$</label>
+        <input id="edit-entry-price" type="number" step="0.01" placeholder="z.B. 102.50" />
+      </div>
+      <div class="modal__field">
+        <label for="edit-entry-shares">Stück</label>
+        <input id="edit-entry-shares" type="number" step="any" placeholder="z.B. 50" />
+      </div>
+    </div>
+
+    <div class="modal__field">
+      <label for="edit-notes">Notizen</label>
+      <textarea id="edit-notes" style="min-height:60px"></textarea>
+    </div>
+
+    <!-- Twelve Data overrides (single-call fields) -->
+    <div class="modal__section">
+      <div class="modal__section-title">
+        Twelve Data Override (Single-Call)
+        <button class="btn-text" id="edit-td-lookup" title="Symbol bei Twelve Data suchen" style="float:right;margin-top:-4px">
+          <i data-lucide="search" class="icon icon-sm"></i>
+          <span class="btn-text__label">Lookup</span>
+        </button>
+      </div>
+      <div class="modal__row2">
+        <div class="modal__field">
+          <label for="edit-td-symbol">Symbol</label>
+          <input id="edit-td-symbol" type="text" placeholder="z.B. NVDA" />
+        </div>
+        <div class="modal__field">
+          <label for="edit-td-mic">MIC-Code</label>
+          <input id="edit-td-mic" type="text" placeholder="z.B. XNAS" />
+        </div>
+      </div>
+      <div class="modal__field">
+        <label for="edit-yahoo-symbol">Yahoo-Symbol (Fallback)</label>
+        <input id="edit-yahoo-symbol" type="text" placeholder="z.B. SAP.DE / NVDA / OX2.ST" />
+      </div>
+      <div id="edit-td-results" class="td-results" hidden></div>
+      <div id="edit-td-status" class="modal__hint" hidden></div>
+    </div>
+
+    <!-- Alerts editor -->
+    <div class="modal__section">
+      <div class="modal__section-title">Alerts</div>
+      <div class="alert-list" id="edit-alerts-list"></div>
+      <button class="btn-text" id="edit-alert-add" style="align-self:flex-start">
+        <i data-lucide="plus" class="icon icon-sm"></i>
+        <span class="btn-text__label">Alert hinzufügen</span>
+      </button>
+    </div>
+
+    <div class="modal__foot">
+      <button class="modal__btn modal__btn--danger" id="modal-edit-delete">
+        <i data-lucide="trash-2" class="icon icon-sm" style="vertical-align:-3px"></i> Löschen
+      </button>
+      <div style="flex:1"></div>
+      <button class="modal__btn" data-modal-close>Abbrechen</button>
+      <button class="modal__btn modal__btn--primary" id="modal-edit-save">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ NACHKAUF MODAL ════════════ -->
+<div class="modal" id="modal-nachkauf" hidden role="dialog" aria-modal="true" aria-labelledby="modal-nk-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-nk-title">Nachkauf-Kalkulator</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div class="modal__hint" id="nk-context"></div>
+
+    <div class="modal__row2">
+      <div class="modal__field">
+        <label for="nk-pct">Aufstockung %</label>
+        <input id="nk-pct" type="number" step="1" value="30" />
+      </div>
+      <div class="modal__field">
+        <label for="nk-price">Nachkauf-Kurs</label>
+        <input id="nk-price" type="number" step="0.01" />
+      </div>
+    </div>
+
+    <div class="nk-out" id="nk-out"></div>
+
+    <div class="modal__foot">
+      <button class="modal__btn" data-modal-close>Schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ IMPORT MODAL ════════════ -->
+<div class="modal" id="modal-import" hidden role="dialog" aria-modal="true" aria-labelledby="modal-import-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-import-title">JSON importieren</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div class="modal__field">
+      <label for="import-json">JSON</label>
+      <textarea id="import-json" placeholder='Akzeptiert:
+• Schema A:        { "stamm":{...}, "user":{...} } oder Array davon
+• Trend-Scout:     { "results":[ { "symbol":"S92", "name":"...", ... } ] }
+• Wrapper:         { "tickers":[...] }  /  { "data":[...] }
+• Flat single:     { "symbol":"NVDA", "exchange":"NASDAQ", ... }' spellcheck="false"></textarea>
+    </div>
+    <div class="modal__hint">Vorhandene Einträge werden gemerged: nur befüllte Felder überschreiben, Einstand/Stück/Alerts bleiben erhalten.</div>
+    <div class="modal__foot">
+      <button class="modal__btn" data-modal-close>Abbrechen</button>
+      <button class="modal__btn modal__btn--primary" id="modal-import-confirm">Importieren</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ ALERTS OVERVIEW MODAL ════════════ -->
+<div class="modal" id="modal-alerts" hidden role="dialog" aria-modal="true" aria-labelledby="modal-alerts-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-alerts-title">Alle Alerts</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div id="modal-alerts-body"></div>
+  </div>
+</div>
+
+<!-- ════════════ CONFIG MODAL ════════════ -->
+<div class="modal" id="modal-config" hidden role="dialog" aria-modal="true" aria-labelledby="modal-config-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-config-title">API Konfiguration</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div class="modal__field">
+      <label for="cfg-twelvedata">Twelve Data API Key</label>
+      <input id="cfg-twelvedata" type="text" placeholder="—" autocomplete="off" />
+    </div>
+    <div class="modal__hint">Twelve Data Free Tier: 800 Calls/Tag, max. 8/min. Ohne Key keine Refreshes.</div>
+    <div class="modal__foot">
+      <button class="modal__btn" data-modal-close>Abbrechen</button>
+      <button class="modal__btn modal__btn--primary" id="modal-config-save">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ SIDE MENU ════════════ -->
+<div class="scrim" id="nav-scrim" hidden></div>
+<aside class="sheet" id="nav-sheet" hidden aria-label="Navigation">
+  <div class="sheet__head">
+    <div class="sheet__title">Menü</div>
+    <button class="btn-icon" id="nav-sheet-close" aria-label="Menü schließen">
+      <i data-lucide="x" class="icon"></i>
+    </button>
+  </div>
+  <button class="sheet__item" id="menu-nav-btn-screener" aria-current="true">
+    <i data-lucide="search" class="icon"></i> Merkliste
+  </button>
+  <button class="sheet__item" id="menu-nav-btn-config">
+    <i data-lucide="settings" class="icon"></i> API Config
+  </button>
+  <div style="border-top:1px solid var(--surface); margin: var(--s-2) 0;"></div>
+  <button class="sheet__item" id="menu-nav-btn-cloud-load">
+    <i data-lucide="cloud-download" class="icon"></i> Aus Cloud laden
+  </button>
+  <button class="sheet__item" id="menu-nav-btn-cloud-save">
+    <i data-lucide="cloud-upload" class="icon"></i> In Cloud sichern
+  </button>
+</aside>
+
+<script src="app.js"></script>
+
+</body>
+</html>

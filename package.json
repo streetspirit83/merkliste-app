@@ -1,0 +1,10 @@
+{
+  "name": "merkliste",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Persönliches Watchlist- und Portfolio-Tracker-Tool",
+  "type": "module",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
