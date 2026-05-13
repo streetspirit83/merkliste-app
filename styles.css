@@ -517,6 +517,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .tcard.is-trig { border-color: var(--neg); }
 .tcard__row { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; font-family: var(--font-mono); font-size: var(--fs-m); }
 .tcard__sym { font-family: var(--font-sans); font-weight: var(--fw-h); font-size: var(--fs-h); letter-spacing: -0.01em; }
+.tcard__name { font-family: var(--font-sans); font-size: var(--fs-l); color: var(--muted); margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 .tcard__sep { color: var(--border); }
 .tcard__chip { font-family: var(--font-mono); font-weight: var(--fw-m); }
 .tcard__label { font-family: var(--font-sans); font-size: var(--fs-l); font-weight: var(--fw-l); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; margin-right: 4px; }
