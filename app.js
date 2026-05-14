@@ -45,6 +45,7 @@ const Schema = {
   ui: {
     view:        CONFIG.defaults.view,
     bucket:      CONFIG.defaults.bucket,
+    activeView:  "screener",
     menuOpen:    false,
     sortKey:     "day_change_pct",
     sortDir:     "desc",
@@ -685,11 +686,16 @@ const Render = {
     this.filterBtn();
   },
   viewMode() {
-    const { view } = Store.state.ui;
+    const { view, activeView } = Store.state.ui;
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
-    $("#screener-card-view") .hidden = view !== "cards";
-    $("#screener-table-view").hidden = view !== "table";
+    const inScreener = activeView !== "portfolio";
+    $("#view-screener").hidden  = !inScreener;
+    $("#view-portfolio").hidden = inScreener;
+    if (inScreener) {
+      $("#screener-card-view") .hidden = view !== "cards";
+      $("#screener-table-view").hidden = view !== "table";
+    }
   },
   bucket() {
     const b = Store.state.ui.bucket;
@@ -1079,7 +1085,7 @@ function openInfo(id) {
     <div class="modal__field"><label>Sentiment / Trend</label><div>${c.sentiment || "—"} · ${numFmt(c.sentiment_score, 2)} · ${c.trend_strength || "—"}</div></div>
     <div class="modal__field"><label>Quote-Zeitpunkt</label><div>${t.quotes.ts ? new Date(t.quotes.ts).toLocaleString("de-DE") : "—"} · Quelle: ${t.quotes._source || "—"}</div></div>
   `;
-  updatePromptText();
+  if (typeof PROMPTS !== "undefined") updatePromptText();
   openModal("#modal-info");
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
@@ -1702,10 +1708,10 @@ function bindEvents() {
   // dark mode
   $("#btn-dark-mode").addEventListener("click", () => {
     const isDark = document.documentElement.dataset.theme === "dark";
-    document.documentElement.dataset.theme = isDark ? "" : "dark";
-    localStorage.setItem("theme", isDark ? "light" : "dark");
-    $("#dark-mode-icon").setAttribute("data-lucide", isDark ? "moon" : "sun");
-    if (window.lucide) lucide.createIcons();
+    const next = isDark ? "" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("theme", next || "light");
+    _updateDarkIcon();
   });
 
   // info modal — prompt selector
@@ -1716,7 +1722,7 @@ function bindEvents() {
       o.value = p.id; o.textContent = p.label;
       promptSel.appendChild(o);
     });
-    promptSel.addEventListener("change", () => updatePromptText());
+    promptSel.addEventListener("change", updatePromptText);
   }
   $("#btn-copy-prompt").addEventListener("click", () => {
     const ta = $("#info-prompt-text");
@@ -1761,8 +1767,18 @@ function bindEvents() {
    ════════════════════════════════════════════════════ */
 let _currentInfoTicker = null;
 
+function _updateDarkIcon() {
+  const btn = $("#btn-dark-mode");
+  if (!btn) return;
+  const isDark = document.documentElement.dataset.theme === "dark";
+  btn.innerHTML = isDark
+    ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
+}
+
 function switchView(view) {
-  $$("[data-view]").forEach(s => s.hidden = s.dataset.view !== view);
+  Store.patchUi({ activeView: view });
+  Render.viewMode();
   if (view === "portfolio") renderPortfolioPerf();
 }
 
@@ -1899,8 +1915,7 @@ function squarify(items, box, out) {
 function init() {
   console.log("[init] Merkliste boot");
   // restore dark mode
-  const savedTheme = localStorage.getItem("theme");
-  if (savedTheme === "dark") {
+  if (localStorage.getItem("theme") === "dark") {
     document.documentElement.dataset.theme = "dark";
   }
   Store.load();
@@ -1908,10 +1923,7 @@ function init() {
   bindEvents();
   Render.all();
   if (window.lucide) lucide.createIcons();
-  // set correct icon after lucide init
-  const isDark = document.documentElement.dataset.theme === "dark";
-  const icon = $("#dark-mode-icon");
-  if (icon) { icon.setAttribute("data-lucide", isDark ? "sun" : "moon"); if (window.lucide) lucide.createIcons(); }
+  _updateDarkIcon();
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
