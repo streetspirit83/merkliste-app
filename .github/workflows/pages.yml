@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [claude/connect-to-repo-4jevT, main]
+    branches: [main]
 
 permissions:
   contents: read
