@@ -21,6 +21,16 @@
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px;
   --topbar-h: 56px; --subbar-h: 48px; --botbar-h: 64px; --bulkbar-h: 40px;
 }
+[data-theme="dark"] {
+  --bg:      #0d1117;
+  --text:    #e6edf3;
+  --surface: #161b22;
+  --border:  #30363d;
+  --muted:   #8b949e;
+  --accent:  #00A8E8;
+  --pos:     #3fb950;
+  --neg:     #f85149;
+}
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
@@ -570,3 +580,25 @@ input, textarea, select { font: inherit; color: inherit; }
   font-size: var(--fs-l);
   text-align: center;
 }
+
+/* ── Portfolio Performance View ── */
+.pf-summary { display: flex; gap: var(--s-4); padding: var(--s-3) 0 var(--s-4); flex-wrap: wrap; }
+.pf-summary__kpi { display: flex; flex-direction: column; gap: 2px; }
+.pf-summary__label { font-size: var(--fs-l); font-weight: var(--fw-b); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.pf-summary__val { font-family: var(--font-mono); font-size: 20px; font-weight: var(--fw-h); }
+.pf-treemap-wrap { border-radius: var(--r); overflow: hidden; margin-bottom: var(--s-4); background: var(--surface); }
+.pf-treemap { display: block; width: 100%; height: auto; }
+.pf-positions { display: flex; flex-direction: column; gap: 2px; }
+.pf-pos { display: grid; grid-template-columns: 64px 1fr auto auto auto; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-radius: var(--r); background: var(--surface); }
+.pf-pos__sym { font-family: var(--font-sans); font-weight: var(--fw-h); font-size: var(--fs-b); }
+.pf-pos__name { font-size: var(--fs-l); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-pos__val { font-family: var(--font-mono); font-size: var(--fs-b); text-align: right; }
+.pf-pos__pl, .pf-pos__plabs { font-family: var(--font-mono); font-size: var(--fs-l); text-align: right; }
+
+/* ── Dark mode input/textarea/select overrides ── */
+[data-theme="dark"] input,
+[data-theme="dark"] textarea,
+[data-theme="dark"] select { background: var(--surface); border-color: var(--border); color: var(--text); }
+[data-theme="dark"] .modal__dialog { background: #161b22; }
+[data-theme="dark"] .sheet { background: #161b22; }
+[data-theme="dark"] .toast--pos { background: var(--pos); color: #fff; }

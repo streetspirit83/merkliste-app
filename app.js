@@ -908,7 +908,6 @@ function actionsRow(t) {
     <button class="tcard__act btn-info" data-id="${t.id}" aria-label="Details" title="Details"><i data-lucide="info" class="icon icon-sm"></i></button>
     <button class="tcard__act btn-edit" data-id="${t.id}" aria-label="Bearbeiten" title="Bearbeiten"><i data-lucide="pencil" class="icon icon-sm"></i></button>
     ${isPort ? `<button class="tcard__act btn-nk" data-id="${t.id}" aria-label="Nachkauf" title="Nachkauf-Kalkulator"><i data-lucide="calculator" class="icon icon-sm"></i></button>` : ""}
-    <button class="tcard__act btn-refresh-one" data-id="${t.id}" aria-label="Refresh diesen Eintrag" title="Refresh"><i data-lucide="refresh-cw" class="icon icon-sm"></i></button>
     <span class="tcard__ext-links">${tvLink}${stLink}</span>
   </div>`;
 }
@@ -1009,11 +1008,6 @@ function renderCards() {
   host.querySelectorAll(".btn-info").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openInfo(e.currentTarget.dataset.id); }));
   host.querySelectorAll(".btn-edit").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openEdit(e.currentTarget.dataset.id); }));
   host.querySelectorAll(".btn-nk")  .forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openNachkauf(e.currentTarget.dataset.id); }));
-  host.querySelectorAll(".btn-refresh-one").forEach(b => b.addEventListener("click", async e => {
-    e.stopPropagation();
-    const id = e.currentTarget.dataset.id;
-    await refreshOne(id);
-  }));
   host.querySelectorAll(".card-select").forEach(cb => {
     cb.addEventListener("click", e => e.stopPropagation());
     cb.addEventListener("change", e => {
@@ -1064,6 +1058,7 @@ function closeModal(sel) {
 /* ─── INFO modal ─── */
 function openInfo(id) {
   const t = Store.byId(id); if (!t) return;
+  _currentInfoTicker = flat(t);
   const s = t.stamm, u = t.user, c = (t.calculations && t.calculations.trends) || {};
   $("#modal-info-title").textContent = `${s.symbol} · ${s.name || ""}`;
   const news = eff(t, "recent_news");
@@ -1084,6 +1079,7 @@ function openInfo(id) {
     <div class="modal__field"><label>Sentiment / Trend</label><div>${c.sentiment || "—"} · ${numFmt(c.sentiment_score, 2)} · ${c.trend_strength || "—"}</div></div>
     <div class="modal__field"><label>Quote-Zeitpunkt</label><div>${t.quotes.ts ? new Date(t.quotes.ts).toLocaleString("de-DE") : "—"} · Quelle: ${t.quotes._source || "—"}</div></div>
   `;
+  updatePromptText();
   openModal("#modal-info");
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
@@ -1695,12 +1691,38 @@ function bindEvents() {
   });
 
   // side menu
-  $("#menu-nav-btn-screener") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); });
+  $("#menu-nav-btn-screener") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
+  $("#menu-nav-btn-portfolio").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
   $("#menu-nav-btn-config")   .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); openConfig(); });
   $("#menu-nav-btn-cloud-load").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); loadBlob({ silent: false }); });
   $("#menu-nav-btn-cloud-save").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); saveBlob(null); });
   $("#nav-sheet-close")       .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); });
   $("#nav-scrim")             .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); });
+
+  // dark mode
+  $("#btn-dark-mode").addEventListener("click", () => {
+    const isDark = document.documentElement.dataset.theme === "dark";
+    document.documentElement.dataset.theme = isDark ? "" : "dark";
+    localStorage.setItem("theme", isDark ? "light" : "dark");
+    $("#dark-mode-icon").setAttribute("data-lucide", isDark ? "moon" : "sun");
+    if (window.lucide) lucide.createIcons();
+  });
+
+  // info modal — prompt selector
+  const promptSel = $("#info-prompt-select");
+  if (promptSel && typeof PROMPTS !== "undefined") {
+    PROMPTS.forEach(p => {
+      const o = document.createElement("option");
+      o.value = p.id; o.textContent = p.label;
+      promptSel.appendChild(o);
+    });
+    promptSel.addEventListener("change", () => updatePromptText());
+  }
+  $("#btn-copy-prompt").addEventListener("click", () => {
+    const ta = $("#info-prompt-text");
+    if (!ta.value) return;
+    navigator.clipboard.writeText(ta.value).then(() => toast("Prompt kopiert", "pos"));
+  });
 
   // modal: generic close
   $$("[data-modal-close]").forEach(el => el.addEventListener("click", e => closeModal(e.currentTarget.closest(".modal"))));
@@ -1735,15 +1757,161 @@ function bindEvents() {
 }
 
 /* ════════════════════════════════════════════════════
-   SECTION 7 — INIT
+   SECTION 7 — VIEW SWITCHING / DARK MODE / PORTFOLIO
+   ════════════════════════════════════════════════════ */
+let _currentInfoTicker = null;
+
+function switchView(view) {
+  $$("[data-view]").forEach(s => s.hidden = s.dataset.view !== view);
+  if (view === "portfolio") renderPortfolioPerf();
+}
+
+function updatePromptText() {
+  if (!_currentInfoTicker || typeof PROMPTS === "undefined") return;
+  const sel = $("#info-prompt-select");
+  const prompt = PROMPTS.find(p => p.id === sel.value);
+  if (!prompt) return;
+  $("#info-prompt-text").value = fillPrompt(prompt.template, _currentInfoTicker);
+}
+
+function renderPortfolioPerf() {
+  const host = $("#portfolio-perf-root");
+  if (!host) return;
+  const positions = Store.state.tickers
+    .filter(t => t.user.bucket === "portfolio")
+    .map(t => flat(t))
+    .filter(t => t.position_value != null);
+
+  if (!positions.length) {
+    host.innerHTML = `<div class="tcard__empty">Keine Portfolio-Positionen mit Einstand + Stückzahl vorhanden.</div>`;
+    return;
+  }
+
+  const totalValue   = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
+  const totalCost    = positions.reduce((s, t) => s + ((t._raw?.user?.entry_price_manual || 0) * (t._raw?.user?.entry_shares || 0)), 0);
+  const totalPlAbs   = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
+  const totalPlPct   = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
+  const clsP = v => v >= 0 ? "pos" : "neg";
+
+  // treemap via SVG
+  const W = 340, H = 160;
+  const treemap = buildTreemap(positions, W, H);
+
+  host.innerHTML = `
+    <div class="pf-summary">
+      <div class="pf-summary__kpi">
+        <span class="pf-summary__label">Gesamtwert</span>
+        <span class="pf-summary__val">${numFmt(totalValue)}</span>
+      </div>
+      <div class="pf-summary__kpi">
+        <span class="pf-summary__label">P/L gesamt</span>
+        <span class="pf-summary__val ${clsP(totalPlAbs)}">${totalPlAbs >= 0 ? "+" : ""}${numFmt(totalPlAbs, 0)} (${totalPlPct != null ? (totalPlPct >= 0 ? "+" : "") + numFmt(totalPlPct, 2) + "%" : "—"})</span>
+      </div>
+    </div>
+    <div class="pf-treemap-wrap">
+      <svg class="pf-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        ${treemap.map(r => {
+          const perf = r.performance_pct;
+          const fill = perf == null ? "var(--border)" : perf >= 0 ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})` : `rgba(239,66,66,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})`;
+          const textCol = "var(--text)";
+          const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
+          return `<g>
+            <rect x="${r.x1+1}" y="${r.y1+1}" width="${fw-2}" height="${fh-2}" rx="4" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
+            ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="${textCol}" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
+            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="${textCol}" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${perf != null ? (perf>=0?"+":"")+numFmt(perf,1)+"%" : "—"}</text>` : ""}
+          </g>`;
+        }).join("")}
+      </svg>
+    </div>
+    <div class="pf-positions">
+      ${positions.sort((a,b) => (b.position_value||0)-(a.position_value||0)).map(t => `
+        <div class="pf-pos">
+          <span class="pf-pos__sym">${t.symbol}</span>
+          <span class="pf-pos__name dim">${t.name || ""}</span>
+          <span class="pf-pos__val">${numFmt(t.position_value)}</span>
+          <span class="pf-pos__pl ${clsP(t.performance_pct || 0)}">${t.performance_pct != null ? (t.performance_pct>=0?"+":"")+numFmt(t.performance_pct,2)+"%" : "—"}</span>
+          <span class="pf-pos__plabs ${clsP(t.position_pl_abs || 0)}">${t.position_pl_abs != null ? (t.position_pl_abs>=0?"+":"")+numFmt(t.position_pl_abs,0) : "—"}</span>
+        </div>`).join("")}
+    </div>`;
+}
+
+function buildTreemap(positions, W, H) {
+  const total = positions.reduce((s, t) => s + Math.max(t.position_value || 0, 0.01), 0);
+  const items = positions.map(t => ({ ...t, area: (Math.max(t.position_value||0,0.01)/total)*W*H }))
+    .sort((a,b) => b.area - a.area);
+  const rects = [];
+  squarify(items, { x1:0, y1:0, x2:W, y2:H }, rects);
+  return rects;
+}
+function squarify(items, box, out) {
+  if (!items.length) return;
+  const bw = box.x2 - box.x1, bh = box.y2 - box.y1;
+  const totalArea = items.reduce((s,i) => s + i.area, 0);
+  let row = [], rowArea = 0;
+  const ratio = (row, w) => {
+    const a = row.reduce((s,i) => s + i.area, 0);
+    const maxA = Math.max(...row.map(i => i.area));
+    const minA = Math.min(...row.map(i => i.area));
+    return Math.max((w*w*maxA)/(a*a), (a*a)/(w*w*minA));
+  };
+  const horiz = bw >= bh;
+  const w = horiz ? bh : bw;
+  let i = 0;
+  while (i < items.length) {
+    const next = [...row, items[i]];
+    if (row.length && ratio(next, w) > ratio(row, w)) break;
+    row = next; rowArea += items[i].area; i++;
+  }
+  // lay out row
+  const frac = rowArea / totalArea;
+  let pos = horiz ? box.x1 : box.y1;
+  const rowEnd = horiz ? box.x1 + bw * frac : box.y1 + bh * frac;
+  for (const item of row) {
+    const itemFrac = item.area / rowArea;
+    const s = (horiz ? bh : bw) * itemFrac;
+    const r = horiz
+      ? { x1: pos, y1: box.y1, x2: pos + (rowEnd-box.x1), y2: box.y1 + bh * (item.area/rowArea) * (row.length) }
+      : { x1: box.x1, y1: pos, x2: box.x1 + bw * (item.area/rowArea) * (row.length), y2: pos + (rowEnd-box.y1) };
+    // simpler slice layout
+    if (horiz) {
+      const cellH = bh * (item.area / rowArea);
+      out.push({ ...item, x1: box.x1, y1: pos, x2: rowEnd, y2: pos + cellH });
+      pos += cellH;
+    } else {
+      const cellW = bw * (item.area / rowArea);
+      out.push({ ...item, x1: pos, y1: box.y1, x2: pos + cellW, y2: rowEnd });
+      pos += cellW;
+    }
+  }
+  // recurse on remaining
+  const rest = items.slice(i);
+  if (rest.length) {
+    const newBox = horiz
+      ? { x1: rowEnd, y1: box.y1, x2: box.x2, y2: box.y2 }
+      : { x1: box.x1, y1: rowEnd, x2: box.x2, y2: box.y2 };
+    squarify(rest, newBox, out);
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   SECTION 8 — INIT
    ════════════════════════════════════════════════════ */
 function init() {
   console.log("[init] Merkliste boot");
+  // restore dark mode
+  const savedTheme = localStorage.getItem("theme");
+  if (savedTheme === "dark") {
+    document.documentElement.dataset.theme = "dark";
+  }
   Store.load();
   Calc.recomputeAll();
   bindEvents();
   Render.all();
   if (window.lucide) lucide.createIcons();
+  // set correct icon after lucide init
+  const isDark = document.documentElement.dataset.theme === "dark";
+  const icon = $("#dark-mode-icon");
+  if (icon) { icon.setAttribute("data-lucide", isDark ? "sun" : "moon"); if (window.lucide) lucide.createIcons(); }
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });

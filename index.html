@@ -28,6 +28,9 @@
       <button class="btn-icon" id="btn-blob" aria-label="In Cloud sichern" title="Cloud-Save (Netlify Blob)">
         <i data-lucide="cloud-upload" class="icon"></i>
       </button>
+      <button class="btn-icon" id="btn-dark-mode" aria-label="Dark Mode umschalten" title="Dark Mode">
+        <i data-lucide="moon" class="icon" id="dark-mode-icon"></i>
+      </button>
       <button class="btn-text" id="btn-json-export" aria-label="Export JSON in Zwischenablage" title="Export JSON">
         <i data-lucide="download" class="icon icon-sm"></i>
         <span class="btn-text__label">Export</span>
@@ -84,6 +87,10 @@
           </table>
         </div>
       </div>
+    </section>
+
+    <section id="view-portfolio" data-view="portfolio" hidden>
+      <div id="portfolio-perf-root"></div>
     </section>
   </main>
 
@@ -148,6 +155,19 @@
       <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
     </div>
     <div id="modal-info-body"></div>
+    <div class="modal__section" id="modal-info-prompt-section">
+      <div class="modal__section-title" style="display:flex;align-items:center;justify-content:space-between">
+        Prompt (KI-Update)
+        <button class="btn-text" id="btn-copy-prompt" title="Prompt kopieren">
+          <i data-lucide="copy" class="icon icon-sm"></i>
+          <span class="btn-text__label">Kopieren</span>
+        </button>
+      </div>
+      <div class="modal__field">
+        <select id="info-prompt-select"></select>
+      </div>
+      <textarea id="info-prompt-text" style="min-height:120px;font-family:var(--font-mono);font-size:12px;resize:vertical" readonly></textarea>
+    </div>
   </div>
 </div>
 
@@ -351,6 +371,9 @@
   <button class="sheet__item" id="menu-nav-btn-screener" aria-current="true">
     <i data-lucide="search" class="icon"></i> Merkliste
   </button>
+  <button class="sheet__item" id="menu-nav-btn-portfolio">
+    <i data-lucide="bar-chart-2" class="icon"></i> Portfolio Performance
+  </button>
   <button class="sheet__item" id="menu-nav-btn-config">
     <i data-lucide="settings" class="icon"></i> API Config
   </button>
@@ -363,6 +386,7 @@
   </button>
 </aside>
 
+<script src="prompts.js"></script>
 <script src="app.js"></script>
 
 </body>
