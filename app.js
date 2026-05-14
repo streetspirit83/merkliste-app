@@ -649,6 +649,8 @@ function flat(t) {
     id: t.id, _raw: t,
     symbol: s.symbol, name: s.name, exchange: s.exchange,
     asset_type: s.asset_type, sector: s.sector, currency: s.currency,
+    tradingview_url: s.tradingview_url || null,
+    stocktwits_url: s.stocktwits_url || null,
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
     entry_price_manual: u.entry_price_manual, entry_shares: u.entry_shares,
     alerts: u.alerts || [],
@@ -762,8 +764,11 @@ const COLS_PORTFOLIO_EXTRA = [
 ];
 const COLS_TAIL = [
   { key:"ma20_delta_pct",  label:"MA20 Δ",  cell: t => `<span class="${signCls(t.ma20_delta_pct)}">${pctFmt(t.ma20_delta_pct)}</span>` },
+  { key:"ma20",            label:"MA20",    cell: t => `<span class="dim">${numFmt(t.ma20, 2)}</span>` },
   { key:"ma50_delta_pct",  label:"MA50 Δ",  cell: t => `<span class="${signCls(t.ma50_delta_pct)}">${pctFmt(t.ma50_delta_pct)}</span>` },
+  { key:"ma50",            label:"MA50",    cell: t => `<span class="dim">${numFmt(t.ma50, 2)}</span>` },
   { key:"ma200_delta_pct", label:"MA200 Δ", cell: t => `<span class="${signCls(t.ma200_delta_pct)}">${pctFmt(t.ma200_delta_pct)}</span>` },
+  { key:"ma200",           label:"MA200",   cell: t => `<span class="dim">${numFmt(t.ma200, 2)}</span>` },
   { key:"rsi",             label:"RSI",      cell: t => numFmt(t.rsi, 1) },
   { key:"macd_histogram",  label:"MACD H",   cell: t => `<span class="${signCls(t.macd_histogram)}">${numFmt(t.macd_histogram, 2)}</span>` },
   { key:"sentiment_score", label:"Sent.",    cell: t => `<span class="${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span>` },
@@ -891,11 +896,20 @@ function alertChips(t, inline) {
 
 function actionsRow(t) {
   const isPort = t.bucket === "portfolio";
+  const tvLink = t.tradingview_url
+    ? `<a class="tcard__act tcard__ext-link" href="${t.tradingview_url}" target="_blank" rel="noopener" title="TradingView">
+        <img src="https://s3.tradingview.com/userpics/6171439-mFQX_big.png" class="tcard__ext-icon" alt="TV" />
+       </a>` : "";
+  const stLink = t.stocktwits_url
+    ? `<a class="tcard__act tcard__ext-link" href="${t.stocktwits_url}" target="_blank" rel="noopener" title="StockTwits">
+        <img src="https://avatars.githubusercontent.com/u/30304?s=200&v=4" class="tcard__ext-icon" alt="ST" />
+       </a>` : "";
   return `<div class="tcard__actions">
     <button class="tcard__act btn-info" data-id="${t.id}" aria-label="Details" title="Details"><i data-lucide="info" class="icon icon-sm"></i></button>
     <button class="tcard__act btn-edit" data-id="${t.id}" aria-label="Bearbeiten" title="Bearbeiten"><i data-lucide="pencil" class="icon icon-sm"></i></button>
     ${isPort ? `<button class="tcard__act btn-nk" data-id="${t.id}" aria-label="Nachkauf" title="Nachkauf-Kalkulator"><i data-lucide="calculator" class="icon icon-sm"></i></button>` : ""}
     <button class="tcard__act btn-refresh-one" data-id="${t.id}" aria-label="Refresh diesen Eintrag" title="Refresh"><i data-lucide="refresh-cw" class="icon icon-sm"></i></button>
+    <span class="tcard__ext-links">${tvLink}${stLink}</span>
   </div>`;
 }
 
@@ -1087,6 +1101,8 @@ function openEdit(id) {
   $("#edit-td-symbol").value = t.stamm.twelvedata_symbol || t.stamm.symbol || "";
   $("#edit-td-mic").value    = t.stamm.twelvedata_mic_code || "";
   $("#edit-yahoo-symbol").value = t.stamm.yahoo_symbol || "";
+  $("#edit-tv-url").value = t.stamm.tradingview_url || "";
+  $("#edit-st-url").value = t.stamm.stocktwits_url || "";
   /* show guessed Yahoo-symbol as placeholder for unconfigured tickers */
   $("#edit-yahoo-symbol").placeholder = `Vorgeschlagen: ${API._guessYahooSymbol(t) || "—"}`;
   /* reset lookup UI */
@@ -1141,6 +1157,10 @@ function saveEdit() {
   if (tdSym) t.stamm.twelvedata_symbol = tdSym;
   if (tdMic) t.stamm.twelvedata_mic_code = tdMic;
   t.stamm.yahoo_symbol = ySym || null;
+  const tvUrl = $("#edit-tv-url").value.trim();
+  const stUrl = $("#edit-st-url").value.trim();
+  t.stamm.tradingview_url = tvUrl || null;
+  t.stamm.stocktwits_url  = stUrl || null;
   /* if user picked a lookup result, also propagate exchange + currency */
   const choice = Store.state.ui.tdLookupChoice;
   if (choice) {
@@ -1230,7 +1250,7 @@ function recomputeNachkauf() {
 const STAMM_FIELDS = [
   "symbol","name","exchange","asset_type","sector","sub_sector","market_cap_size",
   "currency","core_business","trend_reason","recent_news","next_catalysts","why_not",
-  "tradingview_url","twelvedata_symbol","twelvedata_mic_code","twelvedata_exchange",
+  "tradingview_url","stocktwits_url","twelvedata_symbol","twelvedata_mic_code","twelvedata_exchange",
   "yahoo_symbol"
 ];
 const USER_FIELDS = [
