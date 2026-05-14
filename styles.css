@@ -5,7 +5,7 @@
   --bg:        #FFFFFF;
   --text:      #00171F;
   --accent:    #00A8E8;
-  --pos:       #9BCF63;
+  --pos:       #348535;
   --neg:       #EF4242;
   --surface:   #E9E7E7;
   --border:    #D9D7D7;
@@ -548,7 +548,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .alerts__chip.is-trig { border-color: var(--neg); color: var(--neg); background: rgba(239,66,66,0.06); font-weight: var(--fw-m); }
 .alerts__chip b { font-family: var(--font-sans); font-weight: var(--fw-b); color: var(--muted); margin-right: 4px; }
 .alerts__chip.is-trig b { color: var(--neg); }
-.tcard__actions { display: flex; gap: var(--s-1); margin-top: 2px; flex-wrap: wrap; }
+.tcard__actions { display: flex; gap: var(--s-1); margin-top: 2px; flex-wrap: wrap; align-items: center; }
 .tcard__act {
   width: 32px; height: 32px;
   border-radius: var(--r);
@@ -557,6 +557,10 @@ input, textarea, select { font: inherit; color: inherit; }
   border: 1px solid transparent;
 }
 .tcard__act:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
+.tcard__ext-links { display: inline-flex; gap: var(--s-1); margin-left: auto; }
+.tcard__ext-link { text-decoration: none; }
+.tcard__ext-icon { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; opacity: 0.7; transition: opacity .15s; }
+.tcard__ext-link:hover .tcard__ext-icon { opacity: 1; }
 .tcard__empty {
   border: 1px dashed var(--border);
   border-radius: var(--r);
