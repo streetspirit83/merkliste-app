@@ -1182,9 +1182,6 @@ function renderAlertEditor(alerts, t) {
           <option value="ma_above_pct"        ${a.type==="ma_above_pct"       ?"selected":""}>Preis ≥ MA +X%</option>
           <option value="rsi_above"           ${a.type==="rsi_above"          ?"selected":""}>RSI ≥</option>
           <option value="rsi_below"           ${a.type==="rsi_below"          ?"selected":""}>RSI ≤</option>
-          <option value="ma20_below"          ${a.type==="ma20_below"         ?"selected":""}>Preis ≤ MA20</option>
-          <option value="ma50_below"          ${a.type==="ma50_below"         ?"selected":""}>Preis ≤ MA50</option>
-          <option value="ma200_below"         ${a.type==="ma200_below"        ?"selected":""}>Preis ≤ MA200</option>
           <option value="macd_bullish"        ${a.type==="macd_bullish"       ?"selected":""}>MACD bullisch</option>
           <option value="macd_bearish"        ${a.type==="macd_bearish"       ?"selected":""}>MACD bärisch</option>
           <option value="reversal_up_short"   ${a.type==="reversal_up_short"  ?"selected":""}>Trendwende ↑ kurzfristig (MACD)</option>
@@ -1197,7 +1194,7 @@ function renderAlertEditor(alerts, t) {
           <option value="ma50"  ${maVal==="ma50" ?"selected":""}>MA50</option>
           <option value="ma200" ${maVal==="ma200"?"selected":""}>MA200</option>
         </select>
-        <input class="al-th" type="number" step="any" value="${a.threshold ?? ""}" placeholder="${pholder}" ${noTh?"hidden":""} />
+        <input class="al-th" type="number" step="any" value="${a.threshold ?? (needsMa ? 20 : "")}" placeholder="${pholder}" ${noTh?"hidden":""} />
         <button class="al-del" aria-label="Alert löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
       </div>
     </div>`;
@@ -1209,9 +1206,11 @@ function renderAlertEditor(alerts, t) {
       const row     = sel.closest(".alert-row");
       const noTh    = ALERT_NO_THRESHOLD.has(sel.value);
       const needsMa = MA_PCT.has(sel.value);
-      row.querySelector(".al-th").hidden    = noTh;
-      row.querySelector(".al-th").placeholder = needsMa ? "% Abstand" : "Schwelle";
-      row.querySelector(".al-ma").hidden    = !needsMa;
+      const thEl = row.querySelector(".al-th");
+      thEl.hidden      = noTh;
+      thEl.placeholder = needsMa ? "% Abstand" : "Schwelle";
+      if (needsMa && !thEl.value) thEl.value = 20;
+      row.querySelector(".al-ma").hidden = !needsMa;
     });
   });
   if (window.lucide) lucide.createIcons();

@@ -346,10 +346,10 @@ input, textarea, select { font: inherit; color: inherit; }
   align-items: center;
 }
 .alert-row input, .alert-row select {
-  height: 34px;
-  padding: 0 var(--s-2);
+  height: 30px;
+  padding: 0 6px;
   border: 1px solid var(--border); border-radius: var(--r);
-  font-family: var(--font-mono); font-size: var(--fs-b);
+  font-family: var(--font-mono); font-size: 12px;
 }
 .alert-row button {
   width: 30px; height: 30px;
@@ -604,7 +604,7 @@ input, textarea, select { font: inherit; color: inherit; }
 [data-theme="dark"] .toast--pos { background: var(--pos); color: #fff; }
 
 /* ── Alert Quick-Select Suggestions ── */
-.alert-row__main { display: grid; grid-template-columns: 1fr 1fr 30px; gap: var(--s-2); align-items: center; }
+.alert-row__main { display: grid; grid-template-columns: 1fr 62px 62px 28px; gap: var(--s-2); align-items: center; }
 .al-suggestions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; padding-bottom: var(--s-2); }
 .al-sug {
   height: 24px; padding: 0 var(--s-2);
