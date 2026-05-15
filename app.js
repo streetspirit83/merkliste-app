@@ -1674,7 +1674,7 @@ function bindEvents() {
   $("#btn-element-card-view") .addEventListener("click", () => { Store.patchUi({ view: "cards" }); Render.viewMode(); });
   $("#btn-element-table-view").addEventListener("click", () => { Store.patchUi({ view: "table" }); Render.viewMode(); });
   $("#btn-element-refresh")     .addEventListener("click", () => refreshBucket(Store.state.ui.bucket));
-  $("#btn-element-fullrefresh") .addEventListener("click", refreshAll);
+  $("#btn-element-fullrefresh") .addEventListener("click", () => refreshListFull(Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket), `${Store.state.ui.bucket} vollständig aktualisiert`));
   $("#btn-filter-trig")         .addEventListener("click", () => {
     Store.patchUi({ triggeredOnly: !Store.state.ui.triggeredOnly });
     Render.filterBtn(); Render.bucket();
