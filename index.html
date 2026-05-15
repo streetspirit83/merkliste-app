@@ -22,9 +22,6 @@
   <!-- ════════════ TOP BAR ════════════ -->
   <header class="topbar" role="banner">
     <div class="topbar__actions">
-      <button class="btn-icon" id="btn-config" aria-label="API Konfiguration">
-        <i data-lucide="settings" class="icon"></i>
-      </button>
       <button class="btn-icon" id="btn-blob" aria-label="In Cloud sichern" title="Cloud-Save (Netlify Blob)">
         <i data-lucide="cloud-upload" class="icon"></i>
       </button>
@@ -167,6 +164,15 @@
         <select id="info-prompt-select"></select>
       </div>
       <textarea id="info-prompt-text" style="min-height:120px;font-family:var(--font-mono);font-size:12px;resize:vertical" readonly></textarea>
+    </div>
+    <div class="modal__section" id="modal-info-import-section">
+      <div class="modal__section-title">KI-Antwort importieren</div>
+      <textarea id="info-import-json" placeholder='KI JSON hier einfügen, z.B.:
+{ "trend_reason": "...", "recent_news": ["..."], "sentiment": "bullish" }' style="min-height:90px;font-family:var(--font-mono);font-size:12px;resize:vertical"></textarea>
+      <div id="info-import-status" class="modal__hint" hidden></div>
+      <div style="display:flex;justify-content:flex-end">
+        <button class="modal__btn modal__btn--primary" id="btn-info-import">Übernehmen</button>
+      </div>
     </div>
   </div>
 </div>

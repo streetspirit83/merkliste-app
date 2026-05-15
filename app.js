@@ -751,6 +751,20 @@ function visibleRows() {
     .map(flat);
 }
 
+function sortRows(rows) {
+  const { sortKey, sortDir } = Store.state.ui;
+  const getVal = t => t[sortKey];
+  return [...rows].sort((a, b) => {
+    const va = getVal(a), vb = getVal(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "string" || typeof vb === "string")
+      return sortDir === "asc" ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    return sortDir === "asc" ? va - vb : vb - va;
+  });
+}
+
 /* ────────── table columns ────────── */
 const COLS_SELECT = [
   { key:"__select", label:`<input type="checkbox" id="tbl-select-all" aria-label="Alle wählen" />`,
@@ -836,7 +850,7 @@ function renderTable() {
       const ui = Store.state.ui;
       const dir = (ui.sortKey === k && ui.sortDir === "desc") ? "asc" : "desc";
       Store.patchUi({ sortKey: k, sortDir: dir });
-      renderTable();
+      renderTable(); renderCards();
     });
   });
 
@@ -992,7 +1006,7 @@ function renderCards() {
   const host = $("#screener-card-view");
   if (!host) return;
   const { bucket } = Store.state.ui;
-  const rows = visibleRows();
+  const rows = sortRows(visibleRows());
   if (!rows.length) {
     const total = Store.state.tickers.length;
     const msg = total === 0
@@ -1664,7 +1678,6 @@ function applyTdLookupResult(r) {
    ════════════════════════════════════════════════════ */
 function bindEvents() {
   // top bar
-  $("#btn-config")     .addEventListener("click", openConfig);
   $("#btn-blob")       .addEventListener("click", e => saveBlob(e.currentTarget));
   $("#btn-json-import").addEventListener("click", () => openModal("#modal-import"));
   $("#btn-json-export").addEventListener("click", exportJson);
@@ -1728,6 +1741,28 @@ function bindEvents() {
     const ta = $("#info-prompt-text");
     if (!ta.value) return;
     navigator.clipboard.writeText(ta.value).then(() => toast("Prompt kopiert", "pos"));
+  });
+
+  $("#btn-info-import").addEventListener("click", () => {
+    const status = $("#info-import-status");
+    const raw = $("#info-import-json").value.trim();
+    if (!raw) return;
+    let json;
+    try { json = JSON.parse(raw); } catch { status.textContent = "Ungültiges JSON"; status.hidden = false; return; }
+    const t = _currentInfoTicker && Store.byId(_currentInfoTicker.id);
+    if (!t) return;
+    const STAMM_FIELDS = ["trend_reason","recent_news","next_catalysts","sentiment","why_not","core_business","sector","sub_sector","market_cap_size"];
+    let updated = 0;
+    for (const key of STAMM_FIELDS) {
+      if (key in json) { t.stamm[key] = json[key]; updated++; }
+    }
+    if ("priority" in json) { t.user.priority = json.priority; updated++; }
+    if (!updated) { status.textContent = "Keine bekannten Felder im JSON"; status.hidden = false; return; }
+    Calc.recompute(t); Store.save(); Render.bucket();
+    status.textContent = `${updated} Feld${updated > 1 ? "er" : ""} übernommen`;
+    status.hidden = false;
+    $("#info-import-json").value = "";
+    openInfo(_currentInfoTicker.id);
   });
 
   // modal: generic close
