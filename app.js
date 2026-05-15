@@ -246,6 +246,7 @@ const API = {
   /* public — TD merge keeps existing MAs/RSI since /quote doesn't deliver them */
   async refreshOne(t) {
     const q = await API.tdQuoteSingle(t);
+    t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
     Object.assign(t.quotes, q);
   },
   /* Returns { ok: number, failed: [{symbol, error}] } so caller can report partials.
@@ -260,6 +261,7 @@ const API = {
       const entry = map[sym] || (exch && map[`${sym}:${exch}`]);
       if (!entry)            { failed.push({ symbol: sym, error: "Kein Ergebnis", ticker: t }); continue; }
       if (entry._error)      { failed.push({ symbol: sym, error: entry._error,    ticker: t }); continue; }
+      t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
       Object.assign(t.quotes, entry);
       ok++;
     }
@@ -372,7 +374,10 @@ const API = {
       const tsEntry = tsMap[sym] || (exch && tsMap[`${sym}:${exch}`]);
 
       /* prefer time_series for current price if quote missing; else use quote */
-      if (qEntry && !qEntry._error) Object.assign(t.quotes, qEntry);
+      if (qEntry && !qEntry._error) {
+        t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
+        Object.assign(t.quotes, qEntry);
+      }
       if (tsEntry && !tsEntry._error && Array.isArray(tsEntry) && tsEntry.length) {
         const indicators = Calc.indicatorsFromCloses(tsEntry, t.quotes.price);
         Object.assign(t.quotes, indicators);
@@ -602,8 +607,9 @@ const Calc = {
   /* evaluate one alert against current quotes → boolean trig */
   evalAlert(alert, q) {
     if (!alert) return false;
-    const noTh = ["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish"].includes(alert.type);
+    const noTh = ALERT_NO_THRESHOLD.has(alert.type);
     if (!noTh && alert.threshold == null) return false;
+    const prev = q._prev || null;
     switch (alert.type) {
       case "price_below": return q.price != null && q.price <= alert.threshold;
       case "price_above": return q.price != null && q.price >= alert.threshold;
@@ -614,6 +620,18 @@ const Calc = {
       case "ma200_below": return q.price != null && q.ma200 != null && q.price <= q.ma200;
       case "macd_bullish":return q.macd_histogram != null && q.macd_histogram > 0;
       case "macd_bearish":return q.macd_histogram != null && q.macd_histogram < 0;
+      case "reversal_up_short":
+        return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
+          && prev.macd_histogram <= 0 && q.macd_histogram > 0);
+      case "reversal_down_short":
+        return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
+          && prev.macd_histogram >= 0 && q.macd_histogram < 0);
+      case "reversal_up_long":
+        return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
+          && prev.price <= prev.ma200 && q.price > q.ma200);
+      case "reversal_down_long":
+        return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
+          && prev.price >= prev.ma200 && q.price < q.ma200);
       default: return false;
     }
   },
@@ -909,7 +927,7 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"SL", price_above:"BY", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓" };
+  const lblMap = { price_below:"SL", price_above:"BY", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200" };
   const out = alerts.map(a => {
     const lbl = lblMap[a.type] || a.type;
     const v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold : numFmt(a.threshold);
@@ -1135,7 +1153,7 @@ function openEdit(id) {
   renderAlertEditor(t.user.alerts || [], t);
   openModal("#modal-edit");
 }
-const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish"]);
+const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
 
 function renderAlertEditor(alerts, t) {
   const q = t ? t.quotes : {};
@@ -1145,15 +1163,23 @@ function renderAlertEditor(alerts, t) {
   const suggestions = (type) => {
     if (!["price_below","price_above"].includes(type)) return [];
     const s = [];
-    if (q.ma20  != null) s.push({ label:`MA20: ${numFmt(q.ma20,2)}`,  val: q.ma20  });
-    if (q.ma50  != null) s.push({ label:`MA50: ${numFmt(q.ma50,2)}`,  val: q.ma50  });
-    if (q.ma200 != null) s.push({ label:`MA200: ${numFmt(q.ma200,2)}`,val: q.ma200 });
+    const maOffsets = type === "price_above"
+      ? [{ ma:"ma20",pct:5},{ ma:"ma20",pct:10},{ ma:"ma50",pct:5},{ ma:"ma50",pct:10},{ ma:"ma200",pct:10},{ ma:"ma200",pct:20}]
+      : [{ ma:"ma20",pct:-3},{ ma:"ma20",pct:-5},{ ma:"ma50",pct:-3},{ ma:"ma50",pct:-5},{ ma:"ma200",pct:-5},{ ma:"ma200",pct:-10}];
+    for (const { ma, pct } of maOffsets) {
+      const maVal = q[ma];
+      if (maVal == null) continue;
+      const price = +(maVal * (1 + pct / 100)).toFixed(2);
+      const sign  = pct > 0 ? "+" : "";
+      const lbl   = ma.toUpperCase().replace("MA","MA") + ` ${sign}${pct}%: ${numFmt(price,2)}`;
+      s.push({ label: lbl, val: price });
+    }
     const ep = u.entry_price_manual;
     if (ep != null) {
       if (type === "price_above") {
-        [10,15,25].forEach(p => s.push({ label:`+${p}%: ${numFmt(ep*(1+p/100),2)}`, val: +(ep*(1+p/100)).toFixed(2) }));
+        [10,15,25].forEach(p => s.push({ label:`Einstand +${p}%: ${numFmt(ep*(1+p/100),2)}`, val: +(ep*(1+p/100)).toFixed(2) }));
       } else {
-        [-5,-10].forEach(p => s.push({ label:`${p}%: ${numFmt(ep*(1+p/100),2)}`, val: +(ep*(1+p/100)).toFixed(2) }));
+        [-5,-10].forEach(p => s.push({ label:`Einstand ${p}%: ${numFmt(ep*(1+p/100),2)}`, val: +(ep*(1+p/100)).toFixed(2) }));
       }
     }
     return s;
@@ -1174,6 +1200,10 @@ function renderAlertEditor(alerts, t) {
           <option value="ma200_below"  ${a.type==="ma200_below" ?"selected":""}>Preis ≤ MA200</option>
           <option value="macd_bullish" ${a.type==="macd_bullish"?"selected":""}>MACD bullisch</option>
           <option value="macd_bearish" ${a.type==="macd_bearish"?"selected":""}>MACD bärisch</option>
+          <option value="reversal_up_short"   ${a.type==="reversal_up_short"  ?"selected":""}>Trendwende ↑ kurzfristig (MACD)</option>
+          <option value="reversal_down_short" ${a.type==="reversal_down_short"?"selected":""}>Trendwende ↓ kurzfristig (MACD)</option>
+          <option value="reversal_up_long"    ${a.type==="reversal_up_long"   ?"selected":""}>Trendwende ↑ langfristig (MA200)</option>
+          <option value="reversal_down_long"  ${a.type==="reversal_down_long" ?"selected":""}>Trendwende ↓ langfristig (MA200)</option>
         </select>
         <input class="al-th" type="number" step="any" value="${a.threshold ?? ""}" placeholder="Schwelle" ${noTh?"hidden":""} />
         <button class="al-del" aria-label="Alert löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
@@ -1578,7 +1608,7 @@ function openAlertsOverview() {
   }
   // sort: triggered first
   items.sort((x, y) => (y.a._trig ? 1 : 0) - (x.a._trig ? 1 : 0));
-  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch" };
+  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig" };
   const body = $("#modal-alerts-body");
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
