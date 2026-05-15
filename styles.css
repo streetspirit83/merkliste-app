@@ -614,3 +614,50 @@ input, textarea, select { font: inherit; color: inherit; }
   cursor: pointer; transition: background .1s, border-color .1s, color .1s;
 }
 .al-sug:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Trade-row (edit modal archive) ── */
+.trade-row { padding: var(--s-2) 0; border-bottom: 1px solid var(--border); }
+.trade-row:last-child { border-bottom: none; }
+.trade-row__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 70px 28px;
+  gap: var(--s-2);
+  align-items: center;
+}
+.trade-row__grid input {
+  height: 30px; padding: 0 6px;
+  border: 1px solid var(--border); border-radius: var(--r);
+  font-family: var(--font-mono); font-size: 12px; background: var(--bg); color: var(--text);
+}
+.trade-row__pl { font-size: 12px; font-family: var(--font-mono); }
+.tr-del { width: 28px; height: 28px; border-radius: var(--r); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.tr-del:hover { background: var(--surface); color: var(--neg); }
+
+/* ── Portfolio tabs ── */
+.pf-tabs { display: flex; gap: var(--s-2); padding: var(--s-3) var(--s-3) 0; }
+.pf-tab {
+  height: 32px; padding: 0 var(--s-3);
+  border-radius: var(--r) var(--r) 0 0;
+  border: 1px solid var(--border); border-bottom: none;
+  font-size: var(--fs-l); font-weight: var(--fw-b);
+  color: var(--muted); background: var(--surface);
+  cursor: pointer; transition: color .15s, background .15s;
+}
+.pf-tab.is-active { background: var(--bg); color: var(--text); }
+
+/* ── Archive table ── */
+.arch-summary {
+  padding: var(--s-3);
+  font-size: var(--fs-l);
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+}
+.arch-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.arch-table th {
+  text-align: left; padding: var(--s-2) var(--s-2);
+  font-size: var(--fs-l); font-weight: var(--fw-b); color: var(--muted);
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.arch-table td { padding: var(--s-2) var(--s-2); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 12px; }
+.arch-table tr:last-child td { border-bottom: none; }
+.arch-table tr:hover td { background: var(--surface); }

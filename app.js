@@ -1166,6 +1166,7 @@ function openEdit(id) {
   $("#edit-td-status").hidden = true;
   $("#edit-td-status").textContent = "";
   renderAlertEditor(t.user.alerts || [], t);
+  renderTradeEditor(t.user.trades  || []);
   openModal("#modal-edit");
 }
 const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
@@ -1234,6 +1235,97 @@ function collectAlertsFromEditor() {
     return { type, threshold: +th, ...extra };
   }).filter(Boolean);
 }
+
+function renderTradeEditor(trades) {
+  const host = $("#edit-trades-list"); if (!host) return;
+  host.innerHTML = trades.map((tr, i) => {
+    const pl_abs = (tr.sell_price != null && tr.buy_price != null && tr.shares != null)
+      ? +((tr.sell_price - tr.buy_price) * tr.shares).toFixed(2) : null;
+    const pl_pct = (tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
+      ? +(((tr.sell_price - tr.buy_price) / tr.buy_price) * 100).toFixed(2) : null;
+    return `<div class="trade-row" data-idx="${i}">
+      <div class="trade-row__grid">
+        <input class="tr-buy-date"   type="date"   value="${tr.buy_date   || ""}" title="Kauf-Datum" />
+        <input class="tr-sell-date"  type="date"   value="${tr.sell_date  || ""}" title="Verkauf-Datum" />
+        <input class="tr-shares"     type="number" step="any" value="${tr.shares    ?? ""}" placeholder="Stück" />
+        <button class="tr-del" aria-label="Löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
+        <input class="tr-buy-price"  type="number" step="any" value="${tr.buy_price  ?? ""}" placeholder="Kaufkurs" />
+        <input class="tr-sell-price" type="number" step="any" value="${tr.sell_price ?? ""}" placeholder="Verkaufskurs" />
+        ${pl_abs != null
+          ? `<span class="trade-row__pl ${signCls(pl_abs)}" style="grid-column:span 2">${numFmt(pl_abs)} (${pctFmt(pl_pct)})</span>`
+          : `<span style="grid-column:span 2"></span>`}
+      </div>
+    </div>`;
+  }).join("");
+  host.querySelectorAll(".tr-del").forEach(b => b.addEventListener("click", e => e.currentTarget.closest(".trade-row").remove()));
+  if (window.lucide) lucide.createIcons();
+}
+
+function collectTradesFromEditor() {
+  return $$("#edit-trades-list .trade-row").map((row, i) => {
+    const buy_price  = row.querySelector(".tr-buy-price").value;
+    const sell_price = row.querySelector(".tr-sell-price").value;
+    const shares     = row.querySelector(".tr-shares").value;
+    const buy_date   = row.querySelector(".tr-buy-date").value  || null;
+    const sell_date  = row.querySelector(".tr-sell-date").value || null;
+    if (!buy_price && !sell_price) return null;
+    return {
+      id: `tr_${Date.now()}_${i}`,
+      buy_price:  buy_price  ? +buy_price  : null,
+      sell_price: sell_price ? +sell_price : null,
+      shares:     shares     ? +shares     : null,
+      buy_date, sell_date
+    };
+  }).filter(Boolean);
+}
+
+function renderArchiveView() {
+  const host = $("#portfolio-archive-root"); if (!host) return;
+  const entries = [];
+  for (const t of Store.state.tickers) {
+    for (const tr of (t.user.trades || [])) {
+      const pl_abs = (tr.sell_price != null && tr.buy_price != null && tr.shares != null)
+        ? +((tr.sell_price - tr.buy_price) * tr.shares).toFixed(2) : null;
+      const pl_pct = (tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
+        ? +(((tr.sell_price - tr.buy_price) / tr.buy_price) * 100).toFixed(2) : null;
+      entries.push({ t, tr, pl_abs, pl_pct });
+    }
+  }
+  entries.sort((a, b) => (b.tr.sell_date || "").localeCompare(a.tr.sell_date || ""));
+  if (!entries.length) {
+    host.innerHTML = `<div class="tcard__empty">Noch keine abgeschlossenen Positionen vorhanden.</div>`;
+    return;
+  }
+  const totalPl = entries.reduce((s, e) => s + (e.pl_abs || 0), 0);
+  host.innerHTML = `
+    <div class="arch-summary">Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></div>
+    <table class="arch-table">
+      <thead><tr>
+        <th>Symbol</th><th>Kauf-Datum</th><th>Kaufkurs</th>
+        <th>Verk.-Datum</th><th>Verkaufskurs</th><th>Stück</th>
+        <th>P/L €</th><th>P/L %</th>
+      </tr></thead>
+      <tbody>${entries.map(({ t, tr, pl_abs, pl_pct }) => `<tr>
+        <td><span class="sym-strong">${t.stamm.symbol}</span> <span class="dim" style="font-size:11px">${t.stamm.name || ""}</span></td>
+        <td class="dim">${tr.buy_date  || "—"}</td>
+        <td>${numFmt(tr.buy_price)}</td>
+        <td class="dim">${tr.sell_date || "—"}</td>
+        <td>${numFmt(tr.sell_price)}</td>
+        <td>${tr.shares != null ? numFmt(tr.shares, 0) : "—"}</td>
+        <td class="${signCls(pl_abs)}">${pl_abs != null ? (pl_abs >= 0 ? "+" : "") + numFmt(pl_abs) : "—"}</td>
+        <td class="${signCls(pl_pct)}">${pctFmt(pl_pct)}</td>
+      </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+function switchPfTab(tab) {
+  $$(".pf-tab").forEach(b => b.classList.toggle("is-active", b.dataset.pftab === tab));
+  $("#portfolio-perf-root").hidden    = tab !== "perf";
+  $("#portfolio-archive-root").hidden = tab !== "archive";
+  if (tab === "archive") renderArchiveView();
+}
+
 function saveEdit() {
   const id = Store.state.ui.editingId; if (!id) return;
   const t = Store.byId(id); if (!t) return;
@@ -1262,6 +1354,7 @@ function saveEdit() {
     Store.patchUi({ tdLookupChoice: null });
   }
   t.user.alerts = collectAlertsFromEditor();
+  t.user.trades = collectTradesFromEditor();
   Calc.recompute(t);
   Store.save();
   Render.bucket();
@@ -1449,7 +1542,7 @@ function importJson(text) {
         user: Object.assign({
           marked_at: Date.now(), bucket: "neutral", priority: null, status: "aktiv",
           notes: "", tags: [], entry_price_manual: null, entry_shares: null,
-          entry_price_start: null, alerts: [],
+          entry_price_start: null, alerts: [], trades: [],
           /* Schema-A user-block has override-SLOTS for these — stay null so eff() falls back to stamm */
           core_business: null, trend_reason: null, recent_news: null,
           next_catalysts: null, why_not: null
@@ -1871,6 +1964,14 @@ function bindEvents() {
     cur.push({ type: "price_below", threshold: t.quotes.price || 0 });
     renderAlertEditor(cur, t);
   });
+  $("#edit-trade-add").addEventListener("click", () => {
+    const cur = collectTradesFromEditor();
+    cur.push({ id: `tr_new_${Date.now()}`, buy_price: null, sell_price: null, shares: null, buy_date: null, sell_date: null });
+    renderTradeEditor(cur);
+  });
+
+  // portfolio tabs
+  $$(".pf-tab").forEach(b => b.addEventListener("click", () => switchPfTab(b.dataset.pftab)));
 
   // nachkauf
   $("#nk-pct")  .addEventListener("input", recomputeNachkauf);
