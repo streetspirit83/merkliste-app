@@ -1238,62 +1238,79 @@ function collectAlertsFromEditor() {
 
 function renderTradeEditor(trades) {
   const host = $("#edit-trades-list"); if (!host) return;
-  host.innerHTML = trades.map((tr, i) => {
-    const pl_abs = (tr.sell_price != null && tr.buy_price != null && tr.shares != null)
+  const TYPE_LABELS = { kauf: "Kauf", verkauf: "Verkauf", teilverkauf: "Teilverkauf" };
+  if (!trades.length) { host.innerHTML = ""; return; }
+  host.innerHTML = `
+    <div class="trade-row__labels">
+      <span>Typ</span><span>Datum</span><span>Kurs</span><span>Stück</span><span>P/L</span><span></span>
+    </div>` +
+  trades.map((tr, i) => {
+    const type = tr.type || "verkauf";
+    const isBuy = type === "kauf";
+    const pl_abs = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.shares != null)
       ? +((tr.sell_price - tr.buy_price) * tr.shares).toFixed(2) : null;
-    const pl_pct = (tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
+    const pl_pct = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
       ? +(((tr.sell_price - tr.buy_price) / tr.buy_price) * 100).toFixed(2) : null;
     return `<div class="trade-row" data-idx="${i}">
-      <div class="trade-row__grid">
-        <input class="tr-buy-date"   type="date"   value="${tr.buy_date   || ""}" title="Kauf-Datum" />
-        <input class="tr-sell-date"  type="date"   value="${tr.sell_date  || ""}" title="Verkauf-Datum" />
-        <input class="tr-shares"     type="number" step="any" value="${tr.shares    ?? ""}" placeholder="Stück" />
-        <button class="tr-del" aria-label="Löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
-        <input class="tr-buy-price"  type="number" step="any" value="${tr.buy_price  ?? ""}" placeholder="Kaufkurs" />
-        <input class="tr-sell-price" type="number" step="any" value="${tr.sell_price ?? ""}" placeholder="Verkaufskurs" />
-        ${pl_abs != null
-          ? `<span class="trade-row__pl ${signCls(pl_abs)}" style="grid-column:span 2">${numFmt(pl_abs)} (${pctFmt(pl_pct)})</span>`
-          : `<span style="grid-column:span 2"></span>`}
-      </div>
+      <select class="tr-type">
+        <option value="verkauf"    ${type==="verkauf"    ?"selected":""}>Verkauf</option>
+        <option value="teilverkauf"${type==="teilverkauf"?"selected":""}>Teilverkauf</option>
+        <option value="kauf"       ${type==="kauf"       ?"selected":""}>Nachkauf</option>
+      </select>
+      <input class="tr-date" type="date" value="${(isBuy ? tr.buy_date : tr.sell_date) || ""}" />
+      <input class="tr-price" type="number" step="any" value="${(isBuy ? tr.buy_price : tr.sell_price) ?? ""}" placeholder="Kurs" />
+      <input class="tr-shares" type="number" step="any" value="${tr.shares ?? ""}" placeholder="Stück" />
+      <span class="trade-row__pl ${signCls(pl_abs)}">${pl_abs != null ? (pl_abs>=0?"+":"")+numFmt(pl_abs)+" ("+pctFmt(pl_pct)+")" : "—"}</span>
+      <button class="tr-del" aria-label="Löschen">✕</button>
     </div>`;
   }).join("");
+  host.querySelectorAll(".tr-type").forEach(sel => {
+    sel.addEventListener("change", () => {
+      const row = sel.closest(".trade-row");
+      const isBuy = sel.value === "kauf";
+      row.querySelector(".tr-price").placeholder = isBuy ? "Kaufkurs" : "Verkaufskurs";
+    });
+  });
   host.querySelectorAll(".tr-del").forEach(b => b.addEventListener("click", e => e.currentTarget.closest(".trade-row").remove()));
-  if (window.lucide) lucide.createIcons();
 }
 
 function collectTradesFromEditor() {
   return $$("#edit-trades-list .trade-row").map((row, i) => {
-    const buy_price  = row.querySelector(".tr-buy-price").value;
-    const sell_price = row.querySelector(".tr-sell-price").value;
-    const shares     = row.querySelector(".tr-shares").value;
-    const buy_date   = row.querySelector(".tr-buy-date").value  || null;
-    const sell_date  = row.querySelector(".tr-sell-date").value || null;
-    if (!buy_price && !sell_price) return null;
+    const type      = row.querySelector(".tr-type").value;
+    const price     = row.querySelector(".tr-price").value;
+    const shares    = row.querySelector(".tr-shares").value;
+    const date      = row.querySelector(".tr-date").value || null;
+    const isBuy     = type === "kauf";
+    if (!price) return null;
     return {
       id: `tr_${Date.now()}_${i}`,
-      buy_price:  buy_price  ? +buy_price  : null,
-      sell_price: sell_price ? +sell_price : null,
-      shares:     shares     ? +shares     : null,
-      buy_date, sell_date
+      type,
+      buy_price:  isBuy  ? +price : null,
+      sell_price: !isBuy ? +price : null,
+      buy_date:   isBuy  ? date   : null,
+      sell_date:  !isBuy ? date   : null,
+      shares: shares ? +shares : null
     };
   }).filter(Boolean);
 }
 
 function renderArchiveView() {
   const host = $("#portfolio-archive-root"); if (!host) return;
+  const TYPE_LABELS = { kauf: "Nachkauf", verkauf: "Verkauf", teilverkauf: "Teilverkauf" };
   const entries = [];
   for (const t of Store.state.tickers) {
     for (const tr of (t.user.trades || [])) {
-      const pl_abs = (tr.sell_price != null && tr.buy_price != null && tr.shares != null)
+      const isBuy  = tr.type === "kauf";
+      const pl_abs = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.shares != null)
         ? +((tr.sell_price - tr.buy_price) * tr.shares).toFixed(2) : null;
-      const pl_pct = (tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
+      const pl_pct = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
         ? +(((tr.sell_price - tr.buy_price) / tr.buy_price) * 100).toFixed(2) : null;
-      entries.push({ t, tr, pl_abs, pl_pct });
+      entries.push({ t, tr, pl_abs, pl_pct, isBuy });
     }
   }
-  entries.sort((a, b) => (b.tr.sell_date || "").localeCompare(a.tr.sell_date || ""));
+  entries.sort((a, b) => ((b.tr.sell_date || b.tr.buy_date || "")).localeCompare((a.tr.sell_date || a.tr.buy_date || "")));
   if (!entries.length) {
-    host.innerHTML = `<div class="tcard__empty">Noch keine abgeschlossenen Positionen vorhanden.</div>`;
+    host.innerHTML = `<div class="tcard__empty">Noch keine Trades vorhanden.</div>`;
     return;
   }
   const totalPl = entries.reduce((s, e) => s + (e.pl_abs || 0), 0);
@@ -1301,19 +1318,16 @@ function renderArchiveView() {
     <div class="arch-summary">Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></div>
     <table class="arch-table">
       <thead><tr>
-        <th>Symbol</th><th>Kauf-Datum</th><th>Kaufkurs</th>
-        <th>Verk.-Datum</th><th>Verkaufskurs</th><th>Stück</th>
-        <th>P/L €</th><th>P/L %</th>
+        <th>Symbol</th><th>Typ</th><th>Datum</th><th>Kurs</th><th>Stück</th><th>P/L €</th><th>P/L %</th>
       </tr></thead>
-      <tbody>${entries.map(({ t, tr, pl_abs, pl_pct }) => `<tr>
+      <tbody>${entries.map(({ t, tr, pl_abs, pl_pct, isBuy }) => `<tr>
         <td><span class="sym-strong">${t.stamm.symbol}</span> <span class="dim" style="font-size:11px">${t.stamm.name || ""}</span></td>
-        <td class="dim">${tr.buy_date  || "—"}</td>
-        <td>${numFmt(tr.buy_price)}</td>
-        <td class="dim">${tr.sell_date || "—"}</td>
-        <td>${numFmt(tr.sell_price)}</td>
+        <td><span class="pill">${TYPE_LABELS[tr.type] || "—"}</span></td>
+        <td class="dim">${(isBuy ? tr.buy_date : tr.sell_date) || "—"}</td>
+        <td>${numFmt(isBuy ? tr.buy_price : tr.sell_price)}</td>
         <td>${tr.shares != null ? numFmt(tr.shares, 0) : "—"}</td>
         <td class="${signCls(pl_abs)}">${pl_abs != null ? (pl_abs >= 0 ? "+" : "") + numFmt(pl_abs) : "—"}</td>
-        <td class="${signCls(pl_pct)}">${pctFmt(pl_pct)}</td>
+        <td class="${signCls(pl_pct)}">${pl_pct != null ? pctFmt(pl_pct) : "—"}</td>
       </tr>`).join("")}
       </tbody>
     </table>`;
@@ -1966,7 +1980,7 @@ function bindEvents() {
   });
   $("#edit-trade-add").addEventListener("click", () => {
     const cur = collectTradesFromEditor();
-    cur.push({ id: `tr_new_${Date.now()}`, buy_price: null, sell_price: null, shares: null, buy_date: null, sell_date: null });
+    cur.push({ type: "verkauf", buy_price: null, sell_price: null, shares: null, buy_date: null, sell_date: null });
     renderTradeEditor(cur);
   });
 

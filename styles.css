@@ -616,26 +616,39 @@ input, textarea, select { font: inherit; color: inherit; }
 .al-sug:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ── Trade-row (edit modal archive) ── */
-.trade-row { padding: var(--s-2) 0; border-bottom: 1px solid var(--border); }
-.trade-row:last-child { border-bottom: none; }
-.trade-row__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 70px 28px;
-  gap: var(--s-2);
-  align-items: center;
+.trade-row__labels {
+  display: grid; grid-template-columns: 100px 110px 90px 70px 1fr 28px;
+  gap: var(--s-2); padding: 0 0 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--muted);
 }
-.trade-row__grid input {
+.trade-row {
+  display: grid; grid-template-columns: 100px 110px 90px 70px 1fr 28px;
+  gap: var(--s-2); align-items: center;
+  padding: var(--s-1) 0; border-bottom: 1px solid var(--border);
+}
+.trade-row:last-child { border-bottom: none; }
+.trade-row select,
+.trade-row input {
   height: 30px; padding: 0 6px;
   border: 1px solid var(--border); border-radius: var(--r);
-  font-family: var(--font-mono); font-size: 12px; background: var(--bg); color: var(--text);
+  font-family: var(--font-mono); font-size: 12px;
+  background: var(--bg); color: var(--text);
+  width: 100%; box-sizing: border-box;
 }
 .trade-row__pl { font-size: 12px; font-family: var(--font-mono); }
-.tr-del { width: 28px; height: 28px; border-radius: var(--r); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.tr-del {
+  width: 28px; height: 28px; border-radius: var(--r);
+  color: var(--muted); font-size: 14px; line-height: 1;
+  background: none; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 .tr-del:hover { background: var(--surface); color: var(--neg); }
 
 /* ── Portfolio tabs ── */
 .pf-tabs { display: flex; gap: var(--s-2); padding: var(--s-3) var(--s-3) 0; }
 .pf-tab {
+  appearance: none; -webkit-appearance: none;
   height: 32px; padding: 0 var(--s-3);
   border-radius: var(--r) var(--r) 0 0;
   border: 1px solid var(--border); border-bottom: none;
