@@ -620,6 +620,8 @@ const Calc = {
       case "ma200_below": return q.price != null && q.ma200 != null && q.price <= q.ma200;
       case "macd_bullish":return q.macd_histogram != null && q.macd_histogram > 0;
       case "macd_bearish":return q.macd_histogram != null && q.macd_histogram < 0;
+      case "ma_below_pct": { const mv = alert.ma ? q[alert.ma] : null; return mv != null && q.price != null && alert.threshold != null && q.price <= +(mv * (1 - alert.threshold / 100)).toFixed(4); }
+      case "ma_above_pct": { const mv = alert.ma ? q[alert.ma] : null; return mv != null && q.price != null && alert.threshold != null && q.price >= +(mv * (1 + alert.threshold / 100)).toFixed(4); }
       case "reversal_up_short":
         return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
           && prev.macd_histogram <= 0 && q.macd_histogram > 0);
@@ -929,8 +931,15 @@ function alertChips(t, inline) {
   if (!alerts.length) return "";
   const lblMap = { price_below:"SL", price_above:"BY", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200" };
   const out = alerts.map(a => {
-    const lbl = lblMap[a.type] || a.type;
-    const v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold : numFmt(a.threshold);
+    let lbl, v;
+    if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
+      const sign = a.type === "ma_above_pct" ? "+" : "−";
+      lbl = `${a.type==="ma_above_pct"?">":"<"}${(a.ma||"ma50").toUpperCase()} ${sign}${a.threshold}%`;
+      v = "";
+    } else {
+      lbl = lblMap[a.type] || a.type;
+      v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold : numFmt(a.threshold);
+    }
     return `<span class="alerts__chip ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}</span>`;
   });
   return inline
@@ -1156,90 +1165,68 @@ function openEdit(id) {
 const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
 
 function renderAlertEditor(alerts, t) {
-  const q = t ? t.quotes : {};
-  const u = t ? t.user   : {};
   const host = $("#edit-alerts-list");
-
-  const suggestions = (type) => {
-    if (!["price_below","price_above"].includes(type)) return [];
-    const s = [];
-    const maOffsets = type === "price_above"
-      ? [{ ma:"ma20",pct:5},{ ma:"ma20",pct:10},{ ma:"ma50",pct:5},{ ma:"ma50",pct:10},{ ma:"ma200",pct:10},{ ma:"ma200",pct:20}]
-      : [{ ma:"ma20",pct:-3},{ ma:"ma20",pct:-5},{ ma:"ma50",pct:-3},{ ma:"ma50",pct:-5},{ ma:"ma200",pct:-5},{ ma:"ma200",pct:-10}];
-    for (const { ma, pct } of maOffsets) {
-      const maVal = q[ma];
-      if (maVal == null) continue;
-      const price = +(maVal * (1 + pct / 100)).toFixed(2);
-      const sign  = pct > 0 ? "+" : "";
-      const lbl   = ma.toUpperCase().replace("MA","MA") + ` ${sign}${pct}%: ${numFmt(price,2)}`;
-      s.push({ label: lbl, val: price });
-    }
-    const ep = u.entry_price_manual;
-    if (ep != null) {
-      if (type === "price_above") {
-        [10,15,25].forEach(p => s.push({ label:`Einstand +${p}%: ${numFmt(ep*(1+p/100),2)}`, val: +(ep*(1+p/100)).toFixed(2) }));
-      } else {
-        [-5,-10].forEach(p => s.push({ label:`Einstand ${p}%: ${numFmt(ep*(1+p/100),2)}`, val: +(ep*(1+p/100)).toFixed(2) }));
-      }
-    }
-    return s;
-  };
+  const MA_PCT = new Set(["ma_below_pct","ma_above_pct"]);
 
   host.innerHTML = alerts.map((a, i) => {
-    const noTh = ALERT_NO_THRESHOLD.has(a.type);
-    const sugs = suggestions(a.type);
+    const noTh    = ALERT_NO_THRESHOLD.has(a.type);
+    const needsMa = MA_PCT.has(a.type);
+    const pholder = needsMa ? "% Abstand" : "Schwelle";
+    const maVal   = a.ma || "ma50";
     return `<div class="alert-row" data-idx="${i}">
       <div class="alert-row__main">
         <select class="al-type">
-          <option value="price_below"  ${a.type==="price_below" ?"selected":""}>Preis ≤ (SL/Buy)</option>
-          <option value="price_above"  ${a.type==="price_above" ?"selected":""}>Preis ≥ (Sell/TP)</option>
-          <option value="rsi_above"    ${a.type==="rsi_above"   ?"selected":""}>RSI ≥</option>
-          <option value="rsi_below"    ${a.type==="rsi_below"   ?"selected":""}>RSI ≤</option>
-          <option value="ma20_below"   ${a.type==="ma20_below"  ?"selected":""}>Preis ≤ MA20</option>
-          <option value="ma50_below"   ${a.type==="ma50_below"  ?"selected":""}>Preis ≤ MA50</option>
-          <option value="ma200_below"  ${a.type==="ma200_below" ?"selected":""}>Preis ≤ MA200</option>
-          <option value="macd_bullish" ${a.type==="macd_bullish"?"selected":""}>MACD bullisch</option>
-          <option value="macd_bearish" ${a.type==="macd_bearish"?"selected":""}>MACD bärisch</option>
+          <option value="price_below"         ${a.type==="price_below"        ?"selected":""}>Preis ≤ (SL/Buy)</option>
+          <option value="price_above"         ${a.type==="price_above"        ?"selected":""}>Preis ≥ (Sell/TP)</option>
+          <option value="ma_below_pct"        ${a.type==="ma_below_pct"       ?"selected":""}>Preis ≤ MA −X%</option>
+          <option value="ma_above_pct"        ${a.type==="ma_above_pct"       ?"selected":""}>Preis ≥ MA +X%</option>
+          <option value="rsi_above"           ${a.type==="rsi_above"          ?"selected":""}>RSI ≥</option>
+          <option value="rsi_below"           ${a.type==="rsi_below"          ?"selected":""}>RSI ≤</option>
+          <option value="ma20_below"          ${a.type==="ma20_below"         ?"selected":""}>Preis ≤ MA20</option>
+          <option value="ma50_below"          ${a.type==="ma50_below"         ?"selected":""}>Preis ≤ MA50</option>
+          <option value="ma200_below"         ${a.type==="ma200_below"        ?"selected":""}>Preis ≤ MA200</option>
+          <option value="macd_bullish"        ${a.type==="macd_bullish"       ?"selected":""}>MACD bullisch</option>
+          <option value="macd_bearish"        ${a.type==="macd_bearish"       ?"selected":""}>MACD bärisch</option>
           <option value="reversal_up_short"   ${a.type==="reversal_up_short"  ?"selected":""}>Trendwende ↑ kurzfristig (MACD)</option>
           <option value="reversal_down_short" ${a.type==="reversal_down_short"?"selected":""}>Trendwende ↓ kurzfristig (MACD)</option>
           <option value="reversal_up_long"    ${a.type==="reversal_up_long"   ?"selected":""}>Trendwende ↑ langfristig (MA200)</option>
           <option value="reversal_down_long"  ${a.type==="reversal_down_long" ?"selected":""}>Trendwende ↓ langfristig (MA200)</option>
         </select>
-        <input class="al-th" type="number" step="any" value="${a.threshold ?? ""}" placeholder="Schwelle" ${noTh?"hidden":""} />
+        <select class="al-ma" ${needsMa ? "" : "hidden"}>
+          <option value="ma20"  ${maVal==="ma20" ?"selected":""}>MA20</option>
+          <option value="ma50"  ${maVal==="ma50" ?"selected":""}>MA50</option>
+          <option value="ma200" ${maVal==="ma200"?"selected":""}>MA200</option>
+        </select>
+        <input class="al-th" type="number" step="any" value="${a.threshold ?? ""}" placeholder="${pholder}" ${noTh?"hidden":""} />
         <button class="al-del" aria-label="Alert löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
       </div>
-      ${sugs.length ? `<div class="al-suggestions">${sugs.map(s=>`<button class="al-sug" data-val="${s.val}">${s.label}</button>`).join("")}</div>` : ""}
     </div>`;
   }).join("");
 
   host.querySelectorAll(".al-del").forEach(b => b.addEventListener("click", e => e.currentTarget.closest(".alert-row").remove()));
   host.querySelectorAll(".al-type").forEach(sel => {
     sel.addEventListener("change", () => {
-      const row  = sel.closest(".alert-row");
-      const noTh = ALERT_NO_THRESHOLD.has(sel.value);
-      row.querySelector(".al-th").hidden = noTh;
-      const sugs = suggestions(sel.value);
-      let sugEl = row.querySelector(".al-suggestions");
-      if (sugs.length) {
-        if (!sugEl) { sugEl = document.createElement("div"); sugEl.className = "al-suggestions"; row.appendChild(sugEl); }
-        sugEl.innerHTML = sugs.map(s=>`<button class="al-sug" data-val="${s.val}">${s.label}</button>`).join("");
-        sugEl.querySelectorAll(".al-sug").forEach(b => b.addEventListener("click", () => { row.querySelector(".al-th").value = b.dataset.val; }));
-      } else if (sugEl) sugEl.remove();
+      const row     = sel.closest(".alert-row");
+      const noTh    = ALERT_NO_THRESHOLD.has(sel.value);
+      const needsMa = MA_PCT.has(sel.value);
+      row.querySelector(".al-th").hidden    = noTh;
+      row.querySelector(".al-th").placeholder = needsMa ? "% Abstand" : "Schwelle";
+      row.querySelector(".al-ma").hidden    = !needsMa;
     });
   });
-  host.querySelectorAll(".al-sug").forEach(b => b.addEventListener("click", () => {
-    b.closest(".alert-row").querySelector(".al-th").value = b.dataset.val;
-  }));
   if (window.lucide) lucide.createIcons();
 }
 
 function collectAlertsFromEditor() {
   return $$("#edit-alerts-list .alert-row").map(row => {
-    const type = row.querySelector(".al-type").value;
-    if (ALERT_NO_THRESHOLD.has(type)) return { type, threshold: null };
+    const type  = row.querySelector(".al-type").value;
+    const maEl  = row.querySelector(".al-ma");
+    const ma    = (maEl && !maEl.hidden) ? maEl.value : undefined;
+    const extra = ma !== undefined ? { ma } : {};
+    if (ALERT_NO_THRESHOLD.has(type)) return { type, threshold: null, ...extra };
     const th = row.querySelector(".al-th").value;
     if (th === "" || isNaN(+th)) return null;
-    return { type, threshold: +th };
+    return { type, threshold: +th, ...extra };
   }).filter(Boolean);
 }
 function saveEdit() {
@@ -1613,13 +1600,28 @@ function openAlertsOverview() {
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
   } else {
-    body.innerHTML = `<div class="alert-overview">${items.map(({t,a}) => `
+    body.innerHTML = `<div class="alert-overview">${items.map(({t,a}) => {
+      let typeLabel, valLabel;
+      if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
+        const maName = (a.ma || "ma50").toUpperCase();
+        const sign   = a.type === "ma_above_pct" ? "+" : "−";
+        typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
+        const maVal = a.ma ? t.quotes[a.ma] : null;
+        const absPrice = maVal != null && a.threshold != null
+          ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
+          : null;
+        valLabel = absPrice != null ? numFmt(absPrice) : "—";
+      } else {
+        typeLabel = lblMap[a.type] || a.type;
+        valLabel  = numFmt(a.threshold);
+      }
+      return `
       <div class="alert-overview__item ${a._trig ? "is-trig" : ""}">
         <span class="alert-overview__sym">${t.stamm.symbol}</span>
-        <span class="alert-overview__type">${lblMap[a.type] || a.type}</span>
-        <span class="alert-overview__val">${numFmt(a.threshold)} ${a._trig ? "·  ⚠ ausgelöst" : ""}</span>
-      </div>
-    `).join("")}</div>`;
+        <span class="alert-overview__type">${typeLabel}</span>
+        <span class="alert-overview__val">${valLabel} ${a._trig ? "· ⚠ ausgelöst" : ""}</span>
+      </div>`;
+    }).join("")}</div>`;
   }
   openModal("#modal-alerts");
 }
