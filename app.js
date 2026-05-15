@@ -22,7 +22,7 @@ const CONFIG = {
 /* helper: build empty quote+calc shells so render-functions never see undefined */
 const emptyQuotes = () => ({
   price: null, currency_returned: null, day_change_pct: null,
-  volume: null, avg_volume: null, pos_52whigh: null, pos_52low: null,
+  volume: null, avg_volume: null, pos_52whigh: null, pos_52low: null, high_52w: null, low_52w: null,
   rsi: null, macd: null, macd_signal: null, macd_histogram: null,
   ma20: null, ma20_delta_pct: null,
   ma50: null, ma50_delta_pct: null,
@@ -233,6 +233,8 @@ const API = {
       avg_volume: num(j.average_volume),
       pos_52whigh: j.fifty_two_week ? num(j.fifty_two_week.high_change_percent) : null,
       pos_52low:   j.fifty_two_week ? num(j.fifty_two_week.low_change_percent)  : null,
+      high_52w:    j.fifty_two_week ? num(j.fifty_two_week.high) : null,
+      low_52w:     j.fifty_two_week ? num(j.fifty_two_week.low)  : null,
       ts: Date.now(),
       _source: "twelvedata",
       _api_meta: {
@@ -493,6 +495,8 @@ const API = {
       avg_volume: num(q.averageDailyVolume3Month ?? q.avg_volume),
       pos_52whigh: num(q.fiftyTwoWeekHighChangePercent),
       pos_52low:   num(q.fiftyTwoWeekLowChangePercent),
+      high_52w:    num(q.fiftyTwoWeekHigh),
+      low_52w:     num(q.fiftyTwoWeekLow),
       ts: Date.now(),
       _source: "yahoo",
       _api_meta: {
@@ -683,7 +687,7 @@ function flat(t) {
     alerts: u.alerts || [],
     price: q.price, currency_returned: q.currency_returned, day_change_pct: q.day_change_pct,
     volume: q.volume, avg_volume: q.avg_volume,
-    pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low,
+    pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low, high_52w: q.high_52w, low_52w: q.low_52w,
     rsi: q.rsi, macd: q.macd, macd_signal: q.macd_signal, macd_histogram: q.macd_histogram,
     ma20: q.ma20, ma20_delta_pct: q.ma20_delta_pct,
     ma50: q.ma50, ma50_delta_pct: q.ma50_delta_pct,
@@ -826,6 +830,8 @@ const COLS_TAIL = [
   { key:"vol_ratio",       label:"Vol.",
     sortValue: t => (t.volume && t.avg_volume) ? t.volume / t.avg_volume : null,
     cell: t => numFmt((t.volume && t.avg_volume) ? t.volume / t.avg_volume : null, 2) },
+  { key:"high_52w",         label:"52W H",   cell: t => `<span class="dim">${numFmt(t.high_52w, 2)}</span>` },
+  { key:"low_52w",          label:"52W T",   cell: t => `<span class="dim">${numFmt(t.low_52w,  2)}</span>` },
   { key:"asset_type",      label:"Typ",     cell: t => `<span class="pill">${t.asset_type || "—"}</span>` },
   { key:"sector",          label:"Sektor",  cell: t => t.sector || "—" }
 ];
