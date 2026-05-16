@@ -41,9 +41,9 @@ const emptyCalcs = () => ({
 });
 
 const BENCHMARK_DEFAULTS = [
-  { symbol: "^GDAXI", label: "DAX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
-  { symbol: "^GSPC",  label: "S&P", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
-  { symbol: "^IXIC",  label: "NDX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] }
+  { symbol: "^GDAXI", td_symbol: "GDAXI", label: "DAX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
+  { symbol: "^GSPC",  td_symbol: "SPX",   label: "S&P", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
+  { symbol: "^IXIC",  td_symbol: "IXIC",  label: "NDX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] }
 ];
 
 const Schema = {
@@ -77,6 +77,10 @@ const Store = {
           parsed.benchmarks.forEach(b => {
             const def = this.state.benchmarks.find(d => d.symbol === b.symbol);
             if (def) Object.assign(def, b);
+          });
+          // backfill td_symbol for saved data that predates this field
+          this.state.benchmarks.forEach((b, i) => {
+            if (!b.td_symbol) b.td_symbol = BENCHMARK_DEFAULTS[i]?.td_symbol || "";
           });
         }
         if (parsed.ui) Object.assign(this.state.ui, parsed.ui);
@@ -468,21 +472,69 @@ const API = {
     return out;
   },
 
-  /* Fetch benchmark indices (DAX, S&P, NDX) from Yahoo proxy and update Store.state.benchmarks */
+  /* Fetch benchmark indices via Twelve Data (primary) or Yahoo (fallback) */
   async fetchBenchmarks(withHistory = false) {
     const benchmarks = Store.state.benchmarks;
+    const key = API._key();
+    if (key) {
+      await API._fetchBenchmarksTD(benchmarks, withHistory, key);
+    } else {
+      await API._fetchBenchmarksYahoo(benchmarks, withHistory);
+    }
+    Store.save();
+    renderBenchBar();
+  },
+
+  async _fetchBenchmarksTD(benchmarks, withHistory, key) {
+    const active = benchmarks.filter(b => b.td_symbol);
+    if (!active.length) return;
+    const syms = active.map(b => b.td_symbol).join(",");
+    const num = v => (v == null || v === "") ? null : +v;
+    try {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
+      url.searchParams.set("symbol", syms);
+      url.searchParams.set("apikey", key);
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      active.forEach(b => {
+        const q = active.length === 1 ? json : (json[b.td_symbol] || {});
+        if (!q || q.code || q.status === "error") return;
+        b.price          = num(q.close ?? q.price);
+        b.day_change_pct = num(q.percent_change);
+      });
+    } catch (err) { console.warn("[benchmarks] TD quote failed", err); }
+    if (!withHistory) return;
+    await Promise.allSettled(active.map(async b => {
+      try {
+        const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
+        url.searchParams.set("symbol", b.td_symbol);
+        url.searchParams.set("interval", "1day");
+        url.searchParams.set("outputsize", "25");
+        url.searchParams.set("apikey", key);
+        const res = await fetch(url.toString());
+        const json = await res.json();
+        if (!Array.isArray(json.values) || !json.values.length) return;
+        const closes = json.values.map(v => +v.close).filter(n => !isNaN(n));
+        b.closes = closes;
+        b.week_change_pct  = closes.length >= 5  ? +((closes[0] - closes[4])  / closes[4]  * 100).toFixed(2) : null;
+        b.month_change_pct = closes.length >= 21 ? +((closes[0] - closes[20]) / closes[20] * 100).toFixed(2) : null;
+      } catch (err) { console.warn("[benchmarks] TD timeseries failed", b.td_symbol, err); }
+    }));
+  },
+
+  async _fetchBenchmarksYahoo(benchmarks, withHistory) {
     const results = await Promise.allSettled(benchmarks.map(b => {
       const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
       url.searchParams.set("symbol", b.symbol);
       if (withHistory) url.searchParams.set("history", "1");
       return fetch(url.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
     }));
+    const num = v => (v == null || v === "") ? null : +v;
     results.forEach((r, i) => {
       if (r.status !== "fulfilled" || r.value.error) return;
       const j = r.value;
       const q = j.quote || j.meta || {};
-      const num = v => (v == null || v === "") ? null : +v;
-      benchmarks[i].price         = num(q.regularMarketPrice ?? q.price);
+      benchmarks[i].price          = num(q.regularMarketPrice ?? q.price);
       benchmarks[i].day_change_pct = num(q.regularMarketChangePercent ?? q.percent_change);
       if (withHistory && Array.isArray(j.closes) && j.closes.length > 0) {
         benchmarks[i].closes = j.closes.filter(n => n != null && !isNaN(+n)).map(Number);
@@ -491,8 +543,6 @@ const API = {
         benchmarks[i].month_change_pct = c.length >= 21 ? +((c[0] - c[20]) / c[20] * 100).toFixed(2) : null;
       }
     });
-    Store.save();
-    renderBenchBar();
   },
 
   /* Heuristic: if user only set TD fields, derive Yahoo symbol from exchange */
@@ -1160,10 +1210,8 @@ function renderBenchBar() {
   }
 
   function trendSegs(closes) {
-    if (!closes || closes.length < 2) {
+    if (!closes || closes.length < 2)
       return Array.from({ length: 5 }, () => `<span class="bench__seg bench__seg--flat"></span>`).join("");
-    }
-    // last 5 closes: closes[0]=newest
     const slice = closes.slice(0, 6);
     return Array.from({ length: Math.min(5, slice.length - 1) }, (_, i) => {
       const cls = slice[i] >= slice[i + 1] ? "up" : "dn";
@@ -1171,26 +1219,64 @@ function renderBenchBar() {
     }).join("");
   }
 
-  function rowHtml(b) {
+  function itemHtml(b) {
     const price = b.price != null ? b.price.toLocaleString("de-DE", { maximumFractionDigits: 0 }) : "—";
-    return `<div class="bench__row">
-      <span class="bench__label">${b.label}</span>
-      <span class="bench__price">${price}</span>
-      <span class="bench__segs">${trendSegs(b.closes)}</span>
-      <span class="bench__tf"><span class="bench__tf-lbl">1T</span>${pctSpan(b.day_change_pct)}</span>
-      <span class="bench__tf"><span class="bench__tf-lbl">1W</span>${pctSpan(b.week_change_pct)}</span>
-      <span class="bench__tf"><span class="bench__tf-lbl">1M</span>${pctSpan(b.month_change_pct)}</span>
+    return `<div class="bench__item">
+      <div class="bench__item-top">
+        <span class="bench__label">${b.label}</span>
+        <span class="bench__price">${price}</span>
+        <span class="bench__segs">${trendSegs(b.closes)}</span>
+      </div>
+      <div class="bench__item-bot">
+        <span class="bench__tf"><span class="bench__tf-lbl">1T</span>${pctSpan(b.day_change_pct)}</span>
+        <span class="bench__tf"><span class="bench__tf-lbl">1W</span>${pctSpan(b.week_change_pct)}</span>
+        <span class="bench__tf"><span class="bench__tf-lbl">1M</span>${pctSpan(b.month_change_pct)}</span>
+      </div>
     </div>`;
   }
 
-  const [dax, sp, ndx] = benchmarks;
   el.innerHTML = `
-    ${rowHtml(dax)}
-    <div class="bench__row2">
-      ${rowHtml(sp)}
-      <span class="bench__divider"></span>
-      ${rowHtml(ndx)}
-    </div>`;
+    <div class="bench__scroll">
+      ${benchmarks.map(itemHtml).join('<span class="bench__divider"></span>')}
+    </div>
+    <button class="bench__gear" id="btn-bench-settings" title="Benchmark-Einstellungen" aria-label="Benchmark-Einstellungen">
+      <i data-lucide="settings-2" class="icon icon-sm"></i>
+    </button>`;
+
+  $("#btn-bench-settings")?.addEventListener("click", openBenchSettings);
+  if (window.lucide) lucide.createIcons();
+}
+
+function openBenchSettings() {
+  const benchmarks = Store.state.benchmarks;
+  $("#bench-settings-list").innerHTML = benchmarks.map((b, i) => `
+    <div class="modal__row2">
+      <div class="modal__field">
+        <label>Label</label>
+        <input class="bench-cfg-label" data-idx="${i}" type="text" value="${b.label}" placeholder="z.B. DAX" maxlength="8" />
+      </div>
+      <div class="modal__field">
+        <label>TD-Symbol</label>
+        <input class="bench-cfg-td" data-idx="${i}" type="text" value="${b.td_symbol || ""}" placeholder="z.B. GDAXI" />
+      </div>
+    </div>`).join("");
+  openModal("#modal-bench");
+}
+
+function saveBenchSettings() {
+  const benchmarks = Store.state.benchmarks;
+  $$(".bench-cfg-label").forEach(el => {
+    const i = +el.dataset.idx;
+    const v = el.value.trim(); if (v) benchmarks[i].label = v;
+  });
+  $$(".bench-cfg-td").forEach(el => {
+    const i = +el.dataset.idx;
+    benchmarks[i].td_symbol = el.value.trim();
+  });
+  Store.save();
+  closeModal("#modal-bench");
+  renderBenchBar();
+  toast("Gespeichert", "pos");
 }
 
 /* ─── modal open/close ─── */
@@ -2083,7 +2169,11 @@ function bindEvents() {
   });
 
   // bottom nav
-  $("#nav-bottom-element-home") .addEventListener("click", () => { Store.patchUi({ triggeredOnly: false, selected: [] }); Render.all(); });
+  $("#nav-bottom-element-home").addEventListener("click", () => {
+    const next = Store.state.ui.activeView === "portfolio" ? "screener" : "portfolio";
+    Store.patchUi({ triggeredOnly: false, selected: [] });
+    switchView(next);
+  });
   $("#nav-bottom-element-alert").addEventListener("click", openAlertsOverview);
   $("#nav-bottom-element-dropdown").addEventListener("change", e => {
     Store.patchUi({ bucket: e.target.value, selected: [] });
@@ -2191,6 +2281,7 @@ function bindEvents() {
 
   // config
   $("#modal-config-save").addEventListener("click", saveConfig);
+  $("#modal-bench-save") .addEventListener("click", saveBenchSettings);
 }
 
 /* ════════════════════════════════════════════════════

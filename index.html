@@ -375,6 +375,23 @@
   </div>
 </div>
 
+<!-- ════════════ BENCHMARK SETTINGS MODAL ════════════ -->
+<div class="modal" id="modal-bench" hidden role="dialog" aria-modal="true" aria-labelledby="modal-bench-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-bench-title">Benchmark-Symbole</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div class="modal__hint">Twelve Data Symbole für Indices (z.B. GDAXI, SPX, IXIC). Ohne API-Key wird Yahoo verwendet.</div>
+    <div id="bench-settings-list"></div>
+    <div class="modal__foot">
+      <button class="modal__btn" data-modal-close>Abbrechen</button>
+      <button class="modal__btn modal__btn--primary" id="modal-bench-save">Speichern</button>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════ CONFIG MODAL ════════════ -->
 <div class="modal" id="modal-config" hidden role="dialog" aria-modal="true" aria-labelledby="modal-config-title">
   <div class="modal__scrim" data-modal-close></div>
