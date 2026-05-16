@@ -1113,6 +1113,9 @@ function openEdit(id) {
   $("#edit-td-status").hidden = true;
   $("#edit-td-status").textContent = "";
   renderAlertEditor(t.user.alerts || []);
+  const isPortfolio = (t.user.bucket || "neutral") === "portfolio";
+  $("#edit-trades-section").hidden = !isPortfolio;
+  if (isPortfolio) renderTradeEditor(t.user.trades || []);
   openModal("#modal-edit");
 }
 function renderAlertEditor(alerts) {
@@ -1291,6 +1294,8 @@ function saveEdit() {
     Store.patchUi({ tdLookupChoice: null });
   }
   t.user.alerts = collectAlertsFromEditor();
+  if (t.user.bucket === "portfolio") t.user.trades = collectTradesFromEditor();
+  _autoInitTrade(t);
   Calc.recompute(t);
   Store.save();
   Render.bucket();
@@ -1819,6 +1824,10 @@ function bindEvents() {
   // side menu
   $("#menu-nav-btn-screener") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
   $("#menu-nav-btn-portfolio").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
+  document.addEventListener("click", e => {
+    const tab = e.target.closest(".pf-tab");
+    if (tab) switchPfTab(tab.dataset.pftab);
+  });
   $("#menu-nav-btn-config")   .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); openConfig(); });
   $("#menu-nav-btn-cloud-load").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); loadBlob({ silent: false }); });
   $("#menu-nav-btn-cloud-save").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); saveBlob(null); });
@@ -1863,6 +1872,15 @@ function bindEvents() {
     const cur = collectAlertsFromEditor();
     cur.push({ type: "price_below", threshold: t.quotes.price || 0 });
     renderAlertEditor(cur);
+  });
+  $("#edit-trade-add").addEventListener("click", () => {
+    const cur = collectTradesFromEditor();
+    cur.push({ id: `tr_${Date.now()}`, type: "buy", date: new Date().toISOString().slice(0,10), price: null, shares: null });
+    renderTradeEditor(cur);
+  });
+  $("#edit-bucket").addEventListener("change", () => {
+    const isPortfolio = $("#edit-bucket").value === "portfolio";
+    $("#edit-trades-section").hidden = !isPortfolio;
   });
 
   // nachkauf

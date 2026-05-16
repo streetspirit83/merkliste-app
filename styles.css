@@ -595,6 +595,42 @@ input, textarea, select { font: inherit; color: inherit; }
 .pf-pos__val { font-family: var(--font-mono); font-size: var(--fs-b); text-align: right; }
 .pf-pos__pl, .pf-pos__plabs { font-family: var(--font-mono); font-size: var(--fs-l); text-align: right; }
 
+/* ── Trade history editor ── */
+.trade-row__labels,
+.trade-row {
+  display: grid;
+  grid-template-columns: 72px 110px 80px 68px 28px;
+  gap: var(--s-1);
+  align-items: center;
+}
+.trade-row__labels { font-size: var(--fs-l); font-weight: var(--fw-b); color: var(--muted); padding: 2px 0; text-transform: uppercase; letter-spacing: .04em; }
+.trade-row { margin-bottom: 4px; }
+.trade-row input,
+.trade-row select { height: 30px; font-size: 12px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); width: 100%; }
+.tr-del { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:var(--r); color:var(--muted); background:none; border:none; cursor:pointer; }
+.tr-del:hover { color: var(--neg); background: rgba(239,66,66,.08); }
+
+/* ── Portfolio tabs ── */
+.pf-tabs { display: flex; gap: var(--s-1); padding: var(--s-2) 0 var(--s-3); }
+.pf-tab {
+  appearance: none; -webkit-appearance: none;
+  padding: 4px 14px; border-radius: var(--r);
+  font-size: var(--fs-l); font-weight: var(--fw-b); text-transform: uppercase; letter-spacing: .04em;
+  border: 1px solid var(--border); color: var(--muted); background: transparent; cursor: pointer;
+}
+.pf-tab.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── Archive table ── */
+.arch-summary { display: flex; align-items: center; gap: var(--s-3); padding: 0 0 var(--s-2); font-family: var(--font-mono); font-size: var(--fs-l); }
+.arch-table { width: 100%; border-collapse: collapse; font-size: var(--fs-l); font-family: var(--font-mono); }
+.arch-table th { text-align: left; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 4px var(--s-2); border-bottom: 1px solid var(--border); font-weight: var(--fw-b); }
+.arch-table td { padding: 6px var(--s-2); border-bottom: 1px solid var(--surface); vertical-align: middle; }
+.arch-table tbody tr:hover td { background: var(--surface); }
+.sym-strong { font-family: var(--font-sans); font-weight: var(--fw-h); font-size: var(--fs-b); }
+.pill { display: inline-block; padding: 1px 7px; border-radius: var(--r); font-size: 11px; font-weight: var(--fw-b); font-family: var(--font-sans); }
+.pill--pos { background: rgba(53,133,53,.15); color: var(--pos); }
+.pill--neg { background: rgba(239,66,66,.12); color: var(--neg); }
+
 /* ── Dark mode input/textarea/select overrides ── */
 [data-theme="dark"] input,
 [data-theme="dark"] textarea,

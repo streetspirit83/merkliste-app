@@ -90,7 +90,12 @@
     </section>
 
     <section id="view-portfolio" data-view="portfolio" hidden>
+      <div class="pf-tabs">
+        <button class="pf-tab is-active" data-pftab="perf">Performance</button>
+        <button class="pf-tab" data-pftab="archive">Archiv</button>
+      </div>
       <div id="portfolio-perf-root"></div>
+      <div id="portfolio-archive-root" hidden></div>
     </section>
   </main>
 
@@ -260,6 +265,16 @@
       <button class="btn-text" id="edit-alert-add" style="align-self:flex-start">
         <i data-lucide="plus" class="icon icon-sm"></i>
         <span class="btn-text__label">Alert hinzufügen</span>
+      </button>
+    </div>
+
+    <!-- Trade history (only for Portfolio bucket) -->
+    <div class="modal__section" id="edit-trades-section" hidden>
+      <div class="modal__section-title">Trade-Historie</div>
+      <div id="edit-trades-list"></div>
+      <button class="btn-text" id="edit-trade-add" style="align-self:flex-start;margin-top:var(--s-1)">
+        <i data-lucide="plus" class="icon icon-sm"></i>
+        <span class="btn-text__label">Eintrag hinzufügen</span>
       </button>
     </div>
 
