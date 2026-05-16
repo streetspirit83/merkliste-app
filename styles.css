@@ -254,6 +254,7 @@ input, textarea, select { font: inherit; color: inherit; }
   margin: 0 var(--s-1);
 }
 .bench__gear:hover { background: var(--surface); color: var(--text); }
+.bench__gear.is-loading .icon { animation: spin .9s linear infinite; }
 
 /* ────── content ────── */
 .content {

@@ -474,61 +474,35 @@ const API = {
 
   /* Fetch benchmark indices via Twelve Data.
      Requires a TD API key — no Yahoo fallback (proxy not available locally). */
-  async fetchBenchmarks(withHistory = false) {
-    const key = API._key();
-    if (!key) { console.info("[benchmarks] skipped — no TD key"); return; }
+  /* Fetch benchmark indices via Yahoo proxy (always with history for trend + 1W/1M).
+     Manual-only — not called automatically on ticker refresh. Requires Netlify. */
+  async fetchBenchmarks() {
     const benchmarks = Store.state.benchmarks;
-    const active = benchmarks.filter(b => b.td_symbol);
-    if (!active.length) return;
     const num = v => (v == null || v === "") ? null : +v;
-
-    /* ── Quick: batch /quote ── */
-    try {
-      const syms = active.map(b => b.td_symbol).join(",");
-      const url  = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
-      url.searchParams.set("symbol", syms);
-      url.searchParams.set("apikey", key);
-      const res  = await fetch(url.toString());
-      const json = await res.json();
-      if (json.status === "error" || (json.code && json.code !== 200)) {
-        toast(`Benchmarks: ${json.message || "TD-Fehler"}`, "neg");
-        return;
+    const results = await Promise.allSettled(benchmarks.map(b => {
+      const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
+      url.searchParams.set("symbol",  b.symbol);
+      url.searchParams.set("history", "1");
+      return fetch(url.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
+    }));
+    let anyOk = false;
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled" || r.value.error) return;
+      const j = r.value;
+      const q = j.quote || j.meta || {};
+      benchmarks[i].price          = num(q.regularMarketPrice ?? q.price);
+      benchmarks[i].day_change_pct = num(q.regularMarketChangePercent ?? q.percent_change);
+      if (Array.isArray(j.closes) && j.closes.length > 0) {
+        benchmarks[i].closes = j.closes.filter(n => n != null && !isNaN(+n)).map(Number);
+        const c = benchmarks[i].closes;
+        benchmarks[i].week_change_pct  = c.length >= 5  ? +((c[0] - c[4])  / c[4]  * 100).toFixed(2) : null;
+        benchmarks[i].month_change_pct = c.length >= 21 ? +((c[0] - c[20]) / c[20] * 100).toFixed(2) : null;
       }
-      active.forEach(b => {
-        /* TD: single symbol → root object; multiple → keyed by symbol */
-        const q = active.length === 1 ? json : (json[b.td_symbol] || {});
-        if (!q || q.status === "error") return;
-        b.price          = num(q.close ?? q.price);
-        b.day_change_pct = num(q.percent_change);
-      });
-    } catch (err) {
-      toast("Benchmarks: Verbindungsfehler", "neg");
-      console.warn("[benchmarks] TD quote failed", err);
-      return;
-    }
-
-    /* ── Full: per-symbol /time_series (25 days) ── */
-    if (withHistory) {
-      await Promise.allSettled(active.map(async b => {
-        try {
-          const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
-          url.searchParams.set("symbol",     b.td_symbol);
-          url.searchParams.set("interval",   "1day");
-          url.searchParams.set("outputsize", "25");
-          url.searchParams.set("apikey",     key);
-          const res  = await fetch(url.toString());
-          const json = await res.json();
-          if (!Array.isArray(json.values) || !json.values.length) return;
-          const closes = json.values.map(v => +v.close).filter(n => !isNaN(n));
-          b.closes           = closes;
-          b.week_change_pct  = closes.length >= 5  ? +((closes[0] - closes[4])  / closes[4]  * 100).toFixed(2) : null;
-          b.month_change_pct = closes.length >= 21 ? +((closes[0] - closes[20]) / closes[20] * 100).toFixed(2) : null;
-        } catch (err) { console.warn("[benchmarks] TD timeseries failed", b.td_symbol, err); }
-      }));
-    }
-
+      anyOk = true;
+    });
     Store.save();
     renderBenchBar();
+    if (!anyOk) toast("Benchmarks: Kein Ergebnis (Netlify erforderlich)", "neg");
   },
 
   /* Heuristic: if user only set TD fields, derive Yahoo symbol from exchange */
@@ -1227,10 +1201,19 @@ function renderBenchBar() {
     <div class="bench__scroll">
       ${benchmarks.map(itemHtml).join('<span class="bench__divider"></span>')}
     </div>
+    <button class="bench__gear" id="btn-bench-refresh" title="Benchmarks aktualisieren" aria-label="Benchmarks aktualisieren">
+      <i data-lucide="refresh-cw" class="icon icon-sm"></i>
+    </button>
     <button class="bench__gear" id="btn-bench-settings" title="Benchmark-Einstellungen" aria-label="Benchmark-Einstellungen">
       <i data-lucide="settings-2" class="icon icon-sm"></i>
     </button>`;
 
+  $("#btn-bench-refresh") ?.addEventListener("click", async e => {
+    const btn = e.currentTarget;
+    btn.classList.add("is-loading"); btn.disabled = true;
+    await API.fetchBenchmarks();
+    btn.classList.remove("is-loading"); btn.disabled = false;
+  });
   $("#btn-bench-settings")?.addEventListener("click", openBenchSettings);
   if (window.lucide) lucide.createIcons();
 }
@@ -1244,8 +1227,8 @@ function openBenchSettings() {
         <input class="bench-cfg-label" data-idx="${i}" type="text" value="${b.label}" placeholder="z.B. DAX" maxlength="8" />
       </div>
       <div class="modal__field">
-        <label>TD-Symbol</label>
-        <input class="bench-cfg-td" data-idx="${i}" type="text" value="${b.td_symbol || ""}" placeholder="z.B. GDAXI" />
+        <label>Yahoo-Symbol</label>
+        <input class="bench-cfg-sym" data-idx="${i}" type="text" value="${b.symbol || ""}" placeholder="z.B. ^GDAXI" />
       </div>
     </div>`).join("");
   openModal("#modal-bench");
@@ -1257,9 +1240,9 @@ function saveBenchSettings() {
     const i = +el.dataset.idx;
     const v = el.value.trim(); if (v) benchmarks[i].label = v;
   });
-  $$(".bench-cfg-td").forEach(el => {
+  $$(".bench-cfg-sym").forEach(el => {
     const i = +el.dataset.idx;
-    benchmarks[i].td_symbol = el.value.trim();
+    const v = el.value.trim(); if (v) benchmarks[i].symbol = v;
   });
   Store.save();
   closeModal("#modal-bench");
@@ -1918,8 +1901,8 @@ async function runRefresh(refreshFn, list, label) {
     console.warn("[refresh] fatal", err);
   } finally { setRefreshLoading(false); }
 }
-const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label).then(() => API.fetchBenchmarks(false));
-const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label).then(() => API.fetchBenchmarks(true));
+const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label);
+const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label);
 const refreshBucket = b => refreshList(Store.state.tickers.filter(t => t.user.bucket === b), `${b} aktualisiert`);
 const refreshAll    = () => refreshList(Store.state.tickers, "Einträge aktualisiert");
 /* Smart bulk-refresh: with selection → only selected; empty selection → full current bucket */
