@@ -75,6 +75,12 @@
     </div>
   </div>
 
+  <!-- ════════════ PORTFOLIO BAR (replaces subbar in portfolio view) ════════════ -->
+  <div class="pfbar" id="pfbar" hidden role="toolbar" aria-label="Portfolio-Ansicht">
+    <button class="pf-tab is-active" data-pftab="perf">Performance</button>
+    <button class="pf-tab" data-pftab="archive">Archiv</button>
+  </div>
+
   <!-- ════════════ CONTENT ════════════ -->
   <main class="content" id="content">
     <section id="view-screener" data-view="screener">
@@ -90,10 +96,6 @@
     </section>
 
     <section id="view-portfolio" data-view="portfolio" hidden>
-      <div class="pf-tabs">
-        <button class="pf-tab is-active" data-pftab="perf">Performance</button>
-        <button class="pf-tab" data-pftab="archive">Archiv</button>
-      </div>
       <div id="portfolio-perf-root"></div>
       <div id="portfolio-archive-root" hidden></div>
     </section>

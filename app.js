@@ -690,6 +690,7 @@ const Render = {
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
     $("#subbar").hidden         = !inScreener;
+    $("#pfbar").hidden          = inScreener;
     $("#view-screener").hidden  = !inScreener;
     $("#view-portfolio").hidden = inScreener;
     if (inScreener) {
@@ -1226,14 +1227,31 @@ function exportArchiveCsv() {
   a.click(); URL.revokeObjectURL(url);
 }
 
+const ARCH_COLS = [
+  { key: "symbol", label: "Symbol",  val: e => e.t.stamm.symbol },
+  { key: "name",   label: "Name",    val: e => e.t.stamm.name || "" },
+  { key: "date",   label: "Datum",   val: e => e.tr.date || "" },
+  { key: "type",   label: "Typ",     val: e => e.tr.type },
+  { key: "price",  label: "Kurs",    val: e => e.tr.price },
+  { key: "shares", label: "Stück",   val: e => e.tr.shares },
+  { key: "pl",     label: "P/L abs", val: e => e.pl_abs },
+];
+let _archSort = { col: "date", dir: -1 };
+
 function renderArchiveView() {
   const host = $("#portfolio-archive-root"); if (!host) return;
-  const entries = _buildArchiveEntries();
+  let entries = _buildArchiveEntries();
   if (!entries.length) {
     host.innerHTML = `<div class="tcard__empty">Noch keine Trades vorhanden.<br><span class="dim" style="font-size:12px">Trades werden im Edit-Modal unter "Abgeschlossene Positionen" erfasst.</span></div>`;
     return;
   }
+  const col = ARCH_COLS.find(c => c.key === _archSort.col);
+  if (col) entries = [...entries].sort((a, b) => {
+    const va = col.val(a) ?? "", vb = col.val(b) ?? "";
+    return (va < vb ? -1 : va > vb ? 1 : 0) * _archSort.dir;
+  });
   const totalPl = entries.reduce((s, e) => s + (e.pl_abs || 0), 0);
+  const thArrow = key => key === _archSort.col ? (_archSort.dir === 1 ? " ↑" : " ↓") : "";
   host.innerHTML = `
     <div class="arch-summary">
       <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></span>
@@ -1243,7 +1261,7 @@ function renderArchiveView() {
       </button>
     </div>
     <table class="arch-table">
-      <thead><tr><th>Symbol</th><th>Name</th><th>Datum</th><th>Typ</th><th>Kurs</th><th>Stück</th><th>P/L abs</th></tr></thead>
+      <thead><tr>${ARCH_COLS.map(c => `<th data-archcol="${c.key}" style="cursor:pointer">${c.label}${thArrow(c.key)}</th>`).join("")}</tr></thead>
       <tbody>${entries.map(({ t, tr, pl_abs }) => `<tr>
         <td><span class="sym-strong">${t.stamm.symbol}</span></td>
         <td class="dim">${t.stamm.name || "—"}</td>
@@ -1255,6 +1273,12 @@ function renderArchiveView() {
       </tr>`).join("")}
       </tbody>
     </table>`;
+  host.querySelector("thead").addEventListener("click", e => {
+    const th = e.target.closest("th[data-archcol]"); if (!th) return;
+    const key = th.dataset.archcol;
+    _archSort = { col: key, dir: _archSort.col === key ? -_archSort.dir : 1 };
+    renderArchiveView();
+  });
   $("#btn-arch-csv")?.addEventListener("click", exportArchiveCsv);
   if (window.lucide) lucide.createIcons();
 }
@@ -1294,7 +1318,17 @@ function saveEdit() {
     Store.patchUi({ tdLookupChoice: null });
   }
   t.user.alerts = collectAlertsFromEditor();
-  if (t.user.bucket === "portfolio") t.user.trades = collectTradesFromEditor();
+  if (t.user.bucket === "portfolio") {
+    t.user.trades = collectTradesFromEditor();
+    const buys  = (t.user.trades || []).filter(tr => tr.type === "buy"  && tr.price != null && tr.shares != null);
+    const sells = (t.user.trades || []).filter(tr => tr.type === "sell" && tr.shares != null);
+    const totalBuyShares  = buys.reduce((s, tr) => s + tr.shares, 0);
+    const totalSellShares = sells.reduce((s, tr) => s + tr.shares, 0);
+    if (totalBuyShares > 0) {
+      t.user.entry_price_manual = +(buys.reduce((s, tr) => s + tr.price * tr.shares, 0) / totalBuyShares).toFixed(4);
+      t.user.entry_shares = +(totalBuyShares - totalSellShares).toFixed(4);
+    }
+  }
   _autoInitTrade(t);
   Calc.recompute(t);
   Store.save();
@@ -2013,7 +2047,7 @@ function squarify(items, box, out) {
   }
   // lay out row
   const frac = rowArea / totalArea;
-  let pos = horiz ? box.x1 : box.y1;
+  let pos = horiz ? box.y1 : box.x1;
   const rowEnd = horiz ? box.x1 + bw * frac : box.y1 + bh * frac;
   for (const item of row) {
     const itemFrac = item.area / rowArea;

@@ -57,7 +57,7 @@ input, textarea, select { font: inherit; color: inherit; }
    ════════════════════════════════════════════════════ */
 .app {
   display: grid;
-  grid-template-rows: var(--topbar-h) auto 1fr var(--botbar-h);
+  grid-template-rows: var(--topbar-h) auto auto 1fr var(--botbar-h);
   min-height: 100dvh;
   max-width: 720px;
   margin: 0 auto;
@@ -610,8 +610,14 @@ input, textarea, select { font: inherit; color: inherit; }
 .tr-del { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:var(--r); color:var(--muted); background:none; border:none; cursor:pointer; }
 .tr-del:hover { color: var(--neg); background: rgba(239,66,66,.08); }
 
-/* ── Portfolio tabs ── */
-.pf-tabs { display: flex; gap: var(--s-1); padding: var(--s-2) 0 var(--s-3); }
+/* ── Portfolio bar (replaces subbar in portfolio view) ── */
+.pfbar {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 0 var(--s-2);
+  border-bottom: 1px solid var(--surface);
+  background: var(--bg);
+  min-height: var(--subbar-h);
+}
 .pf-tab {
   appearance: none; -webkit-appearance: none;
   padding: 4px 14px; border-radius: var(--r);
