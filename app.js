@@ -937,7 +937,7 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"SL", price_above:"BY", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200" };
+  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200" };
   const out = alerts.map(a => {
     let lbl, v;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
@@ -948,7 +948,8 @@ function alertChips(t, inline) {
       lbl = lblMap[a.type] || a.type;
       v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold : numFmt(a.threshold);
     }
-    return `<span class="alerts__chip ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}</span>`;
+    const side = a.nk_side ? ` <span class="pill pill--${a.nk_side === "buy" ? "pos" : "neg"}" style="font-size:10px">${a.nk_side === "buy" ? "B" : "S"}${a.nk_shares != null ? " " + numFmt(a.nk_shares, 0) : ""}</span>` : "";
+    return `<span class="alerts__chip ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}${side}</span>`;
   });
   return inline
     ? `<span class="alerts" style="display:inline-flex"><span class="tcard__label">Alerts</span>${out.join("")}</span>`
@@ -1009,7 +1010,6 @@ function cardNeutral(t) {
 function cardWatchlist(t) {
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    <span class="tcard__flag" title="Watchlist"><i data-lucide="flag" class="icon icon-sm"></i></span>
     <div class="tcard__row">
       <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
       <span class="tcard__sep">|</span>${priceLine(t)}
@@ -1026,7 +1026,7 @@ function cardWatchlist(t) {
 function cardPortfolio(t) {
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    <span class="tcard__flag">${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}<i data-lucide="briefcase" class="icon icon-sm"></i></span>
+    ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
     <div class="tcard__row">
       <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
       <span class="tcard__sep">|</span>${plChip(t)}
@@ -1440,53 +1440,85 @@ function deleteEntry() {
 function openNachkauf(id) {
   const t = Store.byId(id); if (!t) return;
   Store.patchUi({ nachkaufId: id });
-  $("#modal-nk-title").textContent = `${t.stamm.symbol} · Nachkauf-Kalkulator`;
+  $("#modal-nk-title").textContent = `${t.stamm.symbol} · Kalkulator`;
   const entry  = t.user.entry_price_manual;
   const shares = t.user.entry_shares;
   const price  = t.quotes.price;
-  $("#nk-context").innerHTML = `
-    Einstand <b>${entry != null ? numFmt(entry) : "—"}</b> ·
-    Stück <b>${shares != null ? numFmt(shares, 0) : "—"}</b> ·
-    Live-Preis <b>${numFmt(price)}</b>
-  `;
+  $("#nk-context").innerHTML = `Einstand <b>${entry != null ? numFmt(entry) : "—"}</b> · Stück <b>${shares != null ? numFmt(shares, 0) : "—"}</b> · Live <b>${numFmt(price)}</b>`;
+  $("#nk-type").value  = "buy";
   $("#nk-pct").value   = CONFIG.defaults.nkPct;
   $("#nk-price").value = price != null ? price : "";
   recomputeNachkauf();
   openModal("#modal-nachkauf");
 }
 function recomputeNachkauf() {
-  const id = Store.state.ui.nachkaufId;
-  const t  = id && Store.byId(id);
-  const out = $("#nk-out");
+  const id   = Store.state.ui.nachkaufId;
+  const t    = id && Store.byId(id);
+  const out  = $("#nk-out");
   if (!t) { out.innerHTML = ""; return; }
+  const type   = $("#nk-type").value;
   const entry  = t.user.entry_price_manual;
   const shares = t.user.entry_shares;
   const pct    = +$("#nk-pct").value;
   const price  = +$("#nk-price").value;
 
-  if (entry == null || shares == null || !shares || isNaN(pct) || !price) {
-    out.innerHTML = `<div class="nk-out__row"><span class="nk-out__lbl">Hinweis</span><span class="nk-out__val dim">Einstand, Stück und Nachkauf-Kurs erforderlich</span></div>`;
+  const pctLbl   = type === "buy" ? "Aufstockung %" : "Verkauf %";
+  const priceLbl = type === "buy" ? "Nachkauf-Kurs" : "Verkaufskurs";
+  $("#nk-pct-label").textContent   = pctLbl;
+  $("#nk-price-label").textContent = priceLbl;
+
+  if (!shares || isNaN(pct) || !price) {
+    out.innerHTML = `<div class="nk-out__row"><span class="nk-out__lbl">Hinweis</span><span class="nk-out__val dim">Stück und Kurs erforderlich</span></div>`;
     return;
   }
-  const oldValue = entry * shares;
-  const addValue = oldValue * (pct / 100);
-  const addShares = addValue / price;
-  const newShares = shares + addShares;
-  const newValue  = oldValue + addValue;
-  const newAvg    = newValue / newShares;
-  const liveValue = t.quotes.price != null ? newShares * t.quotes.price : null;
-  const newPL     = liveValue != null ? liveValue - newValue : null;
 
-  out.innerHTML = `
-    <div class="nk-out__row"><span class="nk-out__lbl">+ Investiert</span><span class="nk-out__val">${numFmt(addValue)}</span></div>
-    <div class="nk-out__row"><span class="nk-out__lbl">+ Stück</span><span class="nk-out__val">${numFmt(addShares, 4)}</span></div>
-    <div class="nk-out__row"><span class="nk-out__lbl">Neuer Ø-Einstand</span><span class="nk-out__val">${numFmt(newAvg)}</span></div>
-    <div class="nk-out__row"><span class="nk-out__lbl">Neue Position</span><span class="nk-out__val">${numFmt(newShares, 4)} St · ${numFmt(newValue)}</span></div>
-    ${liveValue != null ? `
-      <div class="nk-out__row"><span class="nk-out__lbl">Live-Wert</span><span class="nk-out__val">${numFmt(liveValue)}</span></div>
-      <div class="nk-out__row"><span class="nk-out__lbl">P/L danach</span><span class="nk-out__val ${signCls(newPL)}">${numFmt(newPL)}</span></div>
-    ` : ""}
-  `;
+  if (type === "buy") {
+    if (entry == null) { out.innerHTML = `<div class="nk-out__row"><span class="nk-out__lbl">Hinweis</span><span class="nk-out__val dim">Einstand erforderlich für Buy-Kalkulation</span></div>`; return; }
+    const oldValue  = entry * shares;
+    const addValue  = oldValue * (pct / 100);
+    const addShares = addValue / price;
+    const newShares = shares + addShares;
+    const newValue  = oldValue + addValue;
+    const newAvg    = newValue / newShares;
+    const liveValue = t.quotes.price != null ? newShares * t.quotes.price : null;
+    const newPL     = liveValue != null ? liveValue - newValue : null;
+    out.innerHTML = `
+      <div class="nk-out__row"><span class="nk-out__lbl">+ Investiert</span><span class="nk-out__val">${numFmt(addValue)}</span></div>
+      <div class="nk-out__row"><span class="nk-out__lbl">+ Stück</span><span class="nk-out__val">${numFmt(addShares, 4)}</span></div>
+      <div class="nk-out__row"><span class="nk-out__lbl">Neuer Ø-Einstand</span><span class="nk-out__val">${numFmt(newAvg)}</span></div>
+      <div class="nk-out__row"><span class="nk-out__lbl">Neue Position</span><span class="nk-out__val">${numFmt(newShares, 4)} St · ${numFmt(newValue)}</span></div>
+      ${liveValue != null ? `
+        <div class="nk-out__row"><span class="nk-out__lbl">Live-Wert</span><span class="nk-out__val">${numFmt(liveValue)}</span></div>
+        <div class="nk-out__row"><span class="nk-out__lbl">P/L danach</span><span class="nk-out__val ${signCls(newPL)}">${numFmt(newPL)}</span></div>
+      ` : ""}`;
+  } else {
+    const sellShares    = shares * (pct / 100);
+    const proceeds      = sellShares * price;
+    const remainShares  = shares - sellShares;
+    const costBase      = entry != null ? entry * shares : null;
+    const pl            = costBase != null ? proceeds - (entry * sellShares) : null;
+    const liveRemain    = t.quotes.price != null ? remainShares * t.quotes.price : null;
+    out.innerHTML = `
+      <div class="nk-out__row"><span class="nk-out__lbl">Verkauf Stück</span><span class="nk-out__val">${numFmt(sellShares, 4)}</span></div>
+      <div class="nk-out__row"><span class="nk-out__lbl">Erlös</span><span class="nk-out__val">${numFmt(proceeds)}</span></div>
+      ${pl != null ? `<div class="nk-out__row"><span class="nk-out__lbl">P/L realisiert</span><span class="nk-out__val ${signCls(pl)}">${pl >= 0 ? "+" : ""}${numFmt(pl)}</span></div>` : ""}
+      <div class="nk-out__row"><span class="nk-out__lbl">Verbleibend</span><span class="nk-out__val">${numFmt(remainShares, 4)} St${liveRemain != null ? " · " + numFmt(liveRemain) : ""}</span></div>`;
+  }
+}
+function setNachkaufAlert() {
+  const id = Store.state.ui.nachkaufId;
+  const t  = id && Store.byId(id); if (!t) return;
+  const type    = $("#nk-type").value;
+  const price   = +$("#nk-price").value; if (!price) { toast("Kein Kurs eingegeben", "neg"); return; }
+  const pct     = +$("#nk-pct").value;
+  const shares  = t.user.entry_shares;
+  const nkShares = shares && pct ? +(shares * (type === "sell" ? pct / 100 : (t.user.entry_price_manual != null ? (t.user.entry_price_manual * shares * pct / 100) / price : 0))).toFixed(4) : null;
+  const alertType = type === "buy" ? "price_below" : "price_above";
+  const alert = { type: alertType, threshold: price, nk_side: type, ...(nkShares ? { nk_shares: nkShares } : {}) };
+  t.user.alerts = [...(t.user.alerts || []), alert];
+  Calc.recompute(t);
+  Store.save();
+  toast(`Alert ${type === "buy" ? "≤" : "≥"} ${numFmt(price)} gesetzt`, "pos");
 }
 
 /* ─── IMPORT JSON ─── */
@@ -2045,8 +2077,10 @@ function bindEvents() {
   });
 
   // nachkauf
-  $("#nk-pct")  .addEventListener("input", recomputeNachkauf);
-  $("#nk-price").addEventListener("input", recomputeNachkauf);
+  $("#nk-type") .addEventListener("change", recomputeNachkauf);
+  $("#nk-pct")  .addEventListener("input",  recomputeNachkauf);
+  $("#nk-price").addEventListener("input",  recomputeNachkauf);
+  $("#btn-nk-alert").addEventListener("click", setNachkaufAlert);
 
   // import
   $("#modal-import-confirm").addEventListener("click", () => {

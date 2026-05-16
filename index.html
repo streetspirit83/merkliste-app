@@ -203,12 +203,12 @@
         </select>
       </div>
       <div class="modal__field">
-        <label for="edit-priority">Priorität</label>
+        <label for="edit-priority">Strategie</label>
         <select id="edit-priority">
           <option value="">—</option>
-          <option value="hoch">Hoch</option>
-          <option value="mittel">Mittel</option>
-          <option value="niedrig">Niedrig</option>
+          <option value="long">Long</option>
+          <option value="swing">Swing</option>
+          <option value="breakout">Breakout</option>
         </select>
       </div>
     </div>
@@ -302,26 +302,36 @@
   <div class="modal__scrim" data-modal-close></div>
   <div class="modal__dialog">
     <div class="modal__head">
-      <div class="modal__title" id="modal-nk-title">Nachkauf-Kalkulator</div>
+      <div class="modal__title" id="modal-nk-title">Kalkulator</div>
       <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
     </div>
     <div class="modal__hint" id="nk-context"></div>
 
     <div class="modal__row2">
       <div class="modal__field">
-        <label for="nk-pct">Aufstockung %</label>
-        <input id="nk-pct" type="number" step="1" value="30" />
+        <label for="nk-type">Typ</label>
+        <select id="nk-type">
+          <option value="buy">Buy (Nachkauf)</option>
+          <option value="sell">Sell (Teilverkauf)</option>
+        </select>
       </div>
       <div class="modal__field">
-        <label for="nk-price">Nachkauf-Kurs</label>
-        <input id="nk-price" type="number" step="0.01" />
+        <label for="nk-pct" id="nk-pct-label">Anteil %</label>
+        <input id="nk-pct" type="number" step="1" value="30" />
       </div>
+    </div>
+    <div class="modal__field">
+      <label for="nk-price" id="nk-price-label">Kurs</label>
+      <input id="nk-price" type="number" step="0.01" />
     </div>
 
     <div class="nk-out" id="nk-out"></div>
 
     <div class="modal__foot">
       <button class="modal__btn" data-modal-close>Schließen</button>
+      <button class="modal__btn" id="btn-nk-alert">
+        <i data-lucide="bell-plus" class="icon icon-sm" style="vertical-align:-3px"></i> Alert setzen
+      </button>
     </div>
   </div>
 </div>
