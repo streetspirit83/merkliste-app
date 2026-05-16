@@ -72,6 +72,12 @@
     </div>
   </div>
 
+  <!-- ════════════ PORTFOLIO BAR (replaces subbar in portfolio view) ════════════ -->
+  <div class="pfbar" id="pfbar" hidden role="toolbar" aria-label="Portfolio-Ansicht">
+    <button class="pf-tab is-active" data-pftab="perf">Performance</button>
+    <button class="pf-tab" data-pftab="archive">Archiv</button>
+  </div>
+
   <!-- ════════════ CONTENT ════════════ -->
   <main class="content" id="content">
     <section id="view-screener" data-view="screener">
@@ -87,10 +93,6 @@
     </section>
 
     <section id="view-portfolio" data-view="portfolio" hidden>
-      <div class="pf-tabs">
-        <button class="pf-tab is-active" data-pftab="perf">Performance</button>
-        <button class="pf-tab" data-pftab="archive">Archiv</button>
-      </div>
       <div id="portfolio-perf-root"></div>
       <div id="portfolio-archive-root" hidden></div>
     </section>
@@ -274,13 +276,13 @@
       </button>
     </div>
 
-    <!-- Trades archive editor -->
-    <div class="modal__section">
-      <div class="modal__section-title">Abgeschlossene Positionen</div>
+    <!-- Trade history (only for Portfolio bucket) -->
+    <div class="modal__section" id="edit-trades-section" hidden>
+      <div class="modal__section-title">Trade-Historie</div>
       <div id="edit-trades-list"></div>
-      <button class="btn-text" id="edit-trade-add" style="align-self:flex-start">
+      <button class="btn-text" id="edit-trade-add" style="align-self:flex-start;margin-top:var(--s-1)">
         <i data-lucide="plus" class="icon icon-sm"></i>
-        <span class="btn-text__label">Position hinzufügen</span>
+        <span class="btn-text__label">Eintrag hinzufügen</span>
       </button>
     </div>
 

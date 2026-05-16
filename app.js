@@ -717,9 +717,11 @@ const Render = {
   },
   viewMode() {
     const { view, activeView } = Store.state.ui;
+    const inScreener = activeView !== "portfolio";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
-    const inScreener = activeView !== "portfolio";
+    $("#subbar").hidden         = !inScreener;
+    $("#pfbar").hidden          = inScreener;
     $("#view-screener").hidden  = !inScreener;
     $("#view-portfolio").hidden = inScreener;
     if (inScreener) {
@@ -1166,7 +1168,9 @@ function openEdit(id) {
   $("#edit-td-status").hidden = true;
   $("#edit-td-status").textContent = "";
   renderAlertEditor(t.user.alerts || [], t);
-  renderTradeEditor(t.user.trades  || []);
+  const isPortfolio = (t.user.bucket || "neutral") === "portfolio";
+  $("#edit-trades-section").hidden = !isPortfolio;
+  if (isPortfolio) renderTradeEditor(t.user.trades || []);
   openModal("#modal-edit");
 }
 const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
@@ -1275,34 +1279,79 @@ function _autoInitTrade(t) {
   t.user.trades = [{ id: `tr_auto_${Date.now()}`, type: "buy", date: null, price: t.user.entry_price_manual, shares: t.user.entry_shares || null }];
 }
 
-function renderArchiveView() {
-  const host = $("#portfolio-archive-root"); if (!host) return;
+function _buildArchiveEntries() {
   const entries = [];
   for (const t of Store.state.tickers) {
     const trades = t.user.trades || [];
-    /* weighted avg cost from all buy entries for this ticker */
+    if (!trades.length) continue;
     const buys = trades.filter(tr => tr.type === "buy");
     const totalBuyShares = buys.reduce((s, tr) => s + (tr.shares || 0), 0);
     const avgCost = totalBuyShares > 0
       ? buys.reduce((s, tr) => s + (tr.price || 0) * (tr.shares || 0), 0) / totalBuyShares
       : (t.user.entry_price_manual || null);
     for (const tr of trades) {
-      const isSell = tr.type === "sell";
-      const pl_abs = (isSell && tr.price != null && avgCost != null && tr.shares != null)
+      const pl_abs = (tr.type === "sell" && tr.price != null && avgCost != null && tr.shares != null)
         ? +((tr.price - avgCost) * tr.shares).toFixed(2) : null;
-      entries.push({ t, tr, pl_abs });
+      entries.push({ t, tr, pl_abs, avgCost });
     }
   }
-  entries.sort((a, b) => (b.tr.date || "").localeCompare(a.tr.date || ""));
+  return entries.sort((a, b) => (b.tr.date || "").localeCompare(a.tr.date || ""));
+}
+
+function exportArchiveCsv() {
+  const entries = _buildArchiveEntries();
+  if (!entries.length) { toast("Keine Trades vorhanden", "neg"); return; }
+  const header = ["Symbol","Name","Datum","Typ","Kurs","Stück","P/L abs"];
+  const rows = entries.map(({ t, tr, pl_abs }) => [
+    t.stamm.symbol, t.stamm.name || "", tr.date || "",
+    tr.type === "buy" ? "Buy" : "Sell",
+    tr.price  != null ? String(tr.price).replace(".", ",")  : "",
+    tr.shares != null ? String(tr.shares).replace(".", ",") : "",
+    pl_abs    != null ? String(pl_abs).replace(".", ",")    : ""
+  ]);
+  const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `trades_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+const ARCH_COLS = [
+  { key: "symbol", label: "Symbol",  val: e => e.t.stamm.symbol },
+  { key: "name",   label: "Name",    val: e => e.t.stamm.name || "" },
+  { key: "date",   label: "Datum",   val: e => e.tr.date || "" },
+  { key: "type",   label: "Typ",     val: e => e.tr.type },
+  { key: "price",  label: "Kurs",    val: e => e.tr.price },
+  { key: "shares", label: "Stück",   val: e => e.tr.shares },
+  { key: "pl",     label: "P/L abs", val: e => e.pl_abs },
+];
+let _archSort = { col: "date", dir: -1 };
+
+function renderArchiveView() {
+  const host = $("#portfolio-archive-root"); if (!host) return;
+  let entries = _buildArchiveEntries();
   if (!entries.length) {
-    host.innerHTML = `<div class="tcard__empty">Noch keine Trades vorhanden.</div>`;
+    host.innerHTML = `<div class="tcard__empty">Noch keine Trades vorhanden.<br><span class="dim" style="font-size:12px">Trades werden im Edit-Modal unter "Trade-Historie" erfasst.</span></div>`;
     return;
   }
+  const col = ARCH_COLS.find(c => c.key === _archSort.col);
+  if (col) entries = [...entries].sort((a, b) => {
+    const va = col.val(a) ?? "", vb = col.val(b) ?? "";
+    return (va < vb ? -1 : va > vb ? 1 : 0) * _archSort.dir;
+  });
   const totalPl = entries.reduce((s, e) => s + (e.pl_abs || 0), 0);
+  const thArrow = key => key === _archSort.col ? (_archSort.dir === 1 ? " ↑" : " ↓") : "";
   host.innerHTML = `
-    <div class="arch-summary">Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></div>
+    <div class="arch-summary">
+      <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></span>
+      <button class="btn-text" id="btn-arch-csv" style="margin-left:auto">
+        <i data-lucide="download" class="icon icon-sm"></i>
+        <span class="btn-text__label">CSV</span>
+      </button>
+    </div>
     <table class="arch-table">
-      <thead><tr><th>Symbol</th><th>Name</th><th>Datum</th><th>Typ</th><th>Kurs</th><th>Stück</th><th>P/L abs</th></tr></thead>
+      <thead><tr>${ARCH_COLS.map(c => `<th data-archcol="${c.key}" style="cursor:pointer">${c.label}${thArrow(c.key)}</th>`).join("")}</tr></thead>
       <tbody>${entries.map(({ t, tr, pl_abs }) => `<tr>
         <td><span class="sym-strong">${t.stamm.symbol}</span></td>
         <td class="dim">${t.stamm.name || "—"}</td>
@@ -1314,6 +1363,14 @@ function renderArchiveView() {
       </tr>`).join("")}
       </tbody>
     </table>`;
+  host.querySelector("thead").addEventListener("click", e => {
+    const th = e.target.closest("th[data-archcol]"); if (!th) return;
+    const key = th.dataset.archcol;
+    _archSort = { col: key, dir: _archSort.col === key ? -_archSort.dir : 1 };
+    renderArchiveView();
+  });
+  $("#btn-arch-csv")?.addEventListener("click", exportArchiveCsv);
+  if (window.lucide) lucide.createIcons();
 }
 
 function switchPfTab(tab) {
@@ -1351,7 +1408,17 @@ function saveEdit() {
     Store.patchUi({ tdLookupChoice: null });
   }
   t.user.alerts = collectAlertsFromEditor();
-  t.user.trades = collectTradesFromEditor();
+  if (t.user.bucket === "portfolio") {
+    t.user.trades = collectTradesFromEditor();
+    const buys  = (t.user.trades || []).filter(tr => tr.type === "buy"  && tr.price != null && tr.shares != null);
+    const sells = (t.user.trades || []).filter(tr => tr.type === "sell" && tr.shares != null);
+    const totalBuyShares  = buys.reduce((s, tr) => s + tr.shares, 0);
+    const totalSellShares = sells.reduce((s, tr) => s + tr.shares, 0);
+    if (totalBuyShares > 0) {
+      t.user.entry_price_manual = +(buys.reduce((s, tr) => s + tr.price * tr.shares, 0) / totalBuyShares).toFixed(4);
+      t.user.entry_shares = +(totalBuyShares - totalSellShares).toFixed(4);
+    }
+  }
   _autoInitTrade(t);
   Calc.recompute(t);
   Store.save();
@@ -1896,6 +1963,10 @@ function bindEvents() {
   // side menu
   $("#menu-nav-btn-screener") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
   $("#menu-nav-btn-portfolio").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
+  document.addEventListener("click", e => {
+    const tab = e.target.closest(".pf-tab");
+    if (tab) switchPfTab(tab.dataset.pftab);
+  });
   $("#menu-nav-btn-config")   .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); openConfig(); });
   $("#menu-nav-btn-cloud-load").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); loadBlob({ silent: false }); });
   $("#menu-nav-btn-cloud-save").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); saveBlob(null); });
@@ -1965,12 +2036,13 @@ function bindEvents() {
   });
   $("#edit-trade-add").addEventListener("click", () => {
     const cur = collectTradesFromEditor();
-    cur.push({ type: "buy", date: null, price: null, shares: null });
+    cur.push({ id: `tr_${Date.now()}`, type: "buy", date: new Date().toISOString().slice(0,10), price: null, shares: null });
     renderTradeEditor(cur);
   });
-
-  // portfolio tabs
-  $$(".pf-tab").forEach(b => b.addEventListener("click", () => switchPfTab(b.dataset.pftab)));
+  $("#edit-bucket").addEventListener("change", () => {
+    const isPortfolio = $("#edit-bucket").value === "portfolio";
+    $("#edit-trades-section").hidden = !isPortfolio;
+  });
 
   // nachkauf
   $("#nk-pct")  .addEventListener("input", recomputeNachkauf);
@@ -2006,7 +2078,11 @@ function _updateDarkIcon() {
 function switchView(view) {
   Store.patchUi({ activeView: view });
   Render.viewMode();
-  if (view === "portfolio") renderPortfolioPerf();
+  if (view === "portfolio") {
+    const activeTab = $(".pf-tab.is-active")?.dataset?.pftab || "perf";
+    if (activeTab === "archive") renderArchiveView();
+    else renderPortfolioPerf();
+  }
 }
 
 function updatePromptText() {
@@ -2107,7 +2183,7 @@ function squarify(items, box, out) {
   }
   // lay out row
   const frac = rowArea / totalArea;
-  let pos = horiz ? box.x1 : box.y1;
+  let pos = horiz ? box.y1 : box.x1;
   const rowEnd = horiz ? box.x1 + bw * frac : box.y1 + bh * frac;
   for (const item of row) {
     const itemFrac = item.area / rowArea;
