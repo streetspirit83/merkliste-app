@@ -57,7 +57,7 @@ input, textarea, select { font: inherit; color: inherit; }
    ════════════════════════════════════════════════════ */
 .app {
   display: grid;
-  grid-template-rows: var(--topbar-h) auto auto 1fr var(--benchbar-h) var(--botbar-h);
+  grid-template-rows: var(--topbar-h) auto auto 1fr auto var(--botbar-h);
   min-height: 100dvh;
   max-width: 720px;
   margin: 0 auto;
@@ -166,7 +166,7 @@ input, textarea, select { font: inherit; color: inherit; }
   border-top: 1px solid var(--surface);
   border-bottom: 1px solid var(--surface);
   position: sticky;
-  bottom: calc(var(--botbar-h) + var(--benchbar-h));
+  bottom: var(--botbar-h);
   z-index: 19;
   box-shadow: 0 -2px 6px rgba(0,23,31,0.04);
 }
@@ -214,9 +214,6 @@ input, textarea, select { font: inherit; color: inherit; }
   background: var(--bg);
   border-top: 1px solid var(--surface);
   height: var(--benchbar-h);
-  position: sticky;
-  bottom: var(--botbar-h);
-  z-index: 18;
   overflow: hidden;
 }
 .bench__scroll {

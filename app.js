@@ -472,77 +472,63 @@ const API = {
     return out;
   },
 
-  /* Fetch benchmark indices via Twelve Data (primary) or Yahoo (fallback) */
+  /* Fetch benchmark indices via Twelve Data.
+     Requires a TD API key — no Yahoo fallback (proxy not available locally). */
   async fetchBenchmarks(withHistory = false) {
-    const benchmarks = Store.state.benchmarks;
     const key = API._key();
-    if (key) {
-      await API._fetchBenchmarksTD(benchmarks, withHistory, key);
-    } else {
-      await API._fetchBenchmarksYahoo(benchmarks, withHistory);
-    }
-    Store.save();
-    renderBenchBar();
-  },
-
-  async _fetchBenchmarksTD(benchmarks, withHistory, key) {
+    if (!key) { console.info("[benchmarks] skipped — no TD key"); return; }
+    const benchmarks = Store.state.benchmarks;
     const active = benchmarks.filter(b => b.td_symbol);
     if (!active.length) return;
-    const syms = active.map(b => b.td_symbol).join(",");
     const num = v => (v == null || v === "") ? null : +v;
+
+    /* ── Quick: batch /quote ── */
     try {
-      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
+      const syms = active.map(b => b.td_symbol).join(",");
+      const url  = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
       url.searchParams.set("symbol", syms);
       url.searchParams.set("apikey", key);
-      const res = await fetch(url.toString());
+      const res  = await fetch(url.toString());
       const json = await res.json();
+      if (json.status === "error" || (json.code && json.code !== 200)) {
+        toast(`Benchmarks: ${json.message || "TD-Fehler"}`, "neg");
+        return;
+      }
       active.forEach(b => {
+        /* TD: single symbol → root object; multiple → keyed by symbol */
         const q = active.length === 1 ? json : (json[b.td_symbol] || {});
-        if (!q || q.code || q.status === "error") return;
+        if (!q || q.status === "error") return;
         b.price          = num(q.close ?? q.price);
         b.day_change_pct = num(q.percent_change);
       });
-    } catch (err) { console.warn("[benchmarks] TD quote failed", err); }
-    if (!withHistory) return;
-    await Promise.allSettled(active.map(async b => {
-      try {
-        const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
-        url.searchParams.set("symbol", b.td_symbol);
-        url.searchParams.set("interval", "1day");
-        url.searchParams.set("outputsize", "25");
-        url.searchParams.set("apikey", key);
-        const res = await fetch(url.toString());
-        const json = await res.json();
-        if (!Array.isArray(json.values) || !json.values.length) return;
-        const closes = json.values.map(v => +v.close).filter(n => !isNaN(n));
-        b.closes = closes;
-        b.week_change_pct  = closes.length >= 5  ? +((closes[0] - closes[4])  / closes[4]  * 100).toFixed(2) : null;
-        b.month_change_pct = closes.length >= 21 ? +((closes[0] - closes[20]) / closes[20] * 100).toFixed(2) : null;
-      } catch (err) { console.warn("[benchmarks] TD timeseries failed", b.td_symbol, err); }
-    }));
-  },
+    } catch (err) {
+      toast("Benchmarks: Verbindungsfehler", "neg");
+      console.warn("[benchmarks] TD quote failed", err);
+      return;
+    }
 
-  async _fetchBenchmarksYahoo(benchmarks, withHistory) {
-    const results = await Promise.allSettled(benchmarks.map(b => {
-      const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
-      url.searchParams.set("symbol", b.symbol);
-      if (withHistory) url.searchParams.set("history", "1");
-      return fetch(url.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
-    }));
-    const num = v => (v == null || v === "") ? null : +v;
-    results.forEach((r, i) => {
-      if (r.status !== "fulfilled" || r.value.error) return;
-      const j = r.value;
-      const q = j.quote || j.meta || {};
-      benchmarks[i].price          = num(q.regularMarketPrice ?? q.price);
-      benchmarks[i].day_change_pct = num(q.regularMarketChangePercent ?? q.percent_change);
-      if (withHistory && Array.isArray(j.closes) && j.closes.length > 0) {
-        benchmarks[i].closes = j.closes.filter(n => n != null && !isNaN(+n)).map(Number);
-        const c = benchmarks[i].closes;
-        benchmarks[i].week_change_pct  = c.length >= 5  ? +((c[0] - c[4])  / c[4]  * 100).toFixed(2) : null;
-        benchmarks[i].month_change_pct = c.length >= 21 ? +((c[0] - c[20]) / c[20] * 100).toFixed(2) : null;
-      }
-    });
+    /* ── Full: per-symbol /time_series (25 days) ── */
+    if (withHistory) {
+      await Promise.allSettled(active.map(async b => {
+        try {
+          const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
+          url.searchParams.set("symbol",     b.td_symbol);
+          url.searchParams.set("interval",   "1day");
+          url.searchParams.set("outputsize", "25");
+          url.searchParams.set("apikey",     key);
+          const res  = await fetch(url.toString());
+          const json = await res.json();
+          if (!Array.isArray(json.values) || !json.values.length) return;
+          const closes = json.values.map(v => +v.close).filter(n => !isNaN(n));
+          b.closes           = closes;
+          b.week_change_pct  = closes.length >= 5  ? +((closes[0] - closes[4])  / closes[4]  * 100).toFixed(2) : null;
+          b.month_change_pct = closes.length >= 21 ? +((closes[0] - closes[20]) / closes[20] * 100).toFixed(2) : null;
+        } catch (err) { console.warn("[benchmarks] TD timeseries failed", b.td_symbol, err); }
+      }));
+    }
+
+    Store.save();
+    renderBenchBar();
   },
 
   /* Heuristic: if user only set TD fields, derive Yahoo symbol from exchange */
@@ -811,10 +797,12 @@ const Render = {
   viewMode() {
     const { view, activeView } = Store.state.ui;
     const inScreener = activeView !== "portfolio";
+    const showBench  = inScreener && view === "table";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
     $("#subbar").hidden         = !inScreener;
     $("#pfbar").hidden          = inScreener;
+    $("#benchbar").hidden       = !showBench;
     $("#view-screener").hidden  = !inScreener;
     $("#view-portfolio").hidden = inScreener;
     if (inScreener) {
