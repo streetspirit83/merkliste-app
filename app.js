@@ -1238,77 +1238,62 @@ function collectAlertsFromEditor() {
 
 function renderTradeEditor(trades) {
   const host = $("#edit-trades-list"); if (!host) return;
-  const TYPE_LABELS = { kauf: "Kauf", verkauf: "Verkauf", teilverkauf: "Teilverkauf" };
   if (!trades.length) { host.innerHTML = ""; return; }
-  host.innerHTML = `
-    <div class="trade-row__labels">
-      <span>Typ</span><span>Datum</span><span>Kurs</span><span>Stück</span><span>P/L</span><span></span>
-    </div>` +
-  trades.map((tr, i) => {
-    const type = tr.type || "verkauf";
-    const isBuy = type === "kauf";
-    const pl_abs = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.shares != null)
-      ? +((tr.sell_price - tr.buy_price) * tr.shares).toFixed(2) : null;
-    const pl_pct = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
-      ? +(((tr.sell_price - tr.buy_price) / tr.buy_price) * 100).toFixed(2) : null;
-    return `<div class="trade-row" data-idx="${i}">
+  host.innerHTML =
+    `<div class="trade-row__labels"><span>Typ</span><span>Datum</span><span>Kurs</span><span>Stück</span><span></span></div>` +
+    trades.map((tr, i) => `<div class="trade-row" data-idx="${i}">
       <select class="tr-type">
-        <option value="verkauf"    ${type==="verkauf"    ?"selected":""}>Verkauf</option>
-        <option value="teilverkauf"${type==="teilverkauf"?"selected":""}>Teilverkauf</option>
-        <option value="kauf"       ${type==="kauf"       ?"selected":""}>Nachkauf</option>
+        <option value="buy"  ${(tr.type||"buy")==="buy" ?"selected":""}>Buy</option>
+        <option value="sell" ${tr.type==="sell"          ?"selected":""}>Sell</option>
       </select>
-      <input class="tr-date" type="date" value="${(isBuy ? tr.buy_date : tr.sell_date) || ""}" />
-      <input class="tr-price" type="number" step="any" value="${(isBuy ? tr.buy_price : tr.sell_price) ?? ""}" placeholder="Kurs" />
+      <input class="tr-date"   type="date"   value="${tr.date   || ""}" />
+      <input class="tr-price"  type="number" step="any" value="${tr.price  ?? ""}" placeholder="Kurs" />
       <input class="tr-shares" type="number" step="any" value="${tr.shares ?? ""}" placeholder="Stück" />
-      <span class="trade-row__pl ${signCls(pl_abs)}">${pl_abs != null ? (pl_abs>=0?"+":"")+numFmt(pl_abs)+" ("+pctFmt(pl_pct)+")" : "—"}</span>
       <button class="tr-del" aria-label="Löschen">✕</button>
-    </div>`;
-  }).join("");
-  host.querySelectorAll(".tr-type").forEach(sel => {
-    sel.addEventListener("change", () => {
-      const row = sel.closest(".trade-row");
-      const isBuy = sel.value === "kauf";
-      row.querySelector(".tr-price").placeholder = isBuy ? "Kaufkurs" : "Verkaufskurs";
-    });
-  });
+    </div>`).join("");
   host.querySelectorAll(".tr-del").forEach(b => b.addEventListener("click", e => e.currentTarget.closest(".trade-row").remove()));
 }
 
 function collectTradesFromEditor() {
   return $$("#edit-trades-list .trade-row").map((row, i) => {
-    const type      = row.querySelector(".tr-type").value;
-    const price     = row.querySelector(".tr-price").value;
-    const shares    = row.querySelector(".tr-shares").value;
-    const date      = row.querySelector(".tr-date").value || null;
-    const isBuy     = type === "kauf";
+    const price  = row.querySelector(".tr-price").value;
     if (!price) return null;
     return {
-      id: `tr_${Date.now()}_${i}`,
-      type,
-      buy_price:  isBuy  ? +price : null,
-      sell_price: !isBuy ? +price : null,
-      buy_date:   isBuy  ? date   : null,
-      sell_date:  !isBuy ? date   : null,
-      shares: shares ? +shares : null
+      id:     `tr_${Date.now()}_${i}`,
+      type:   row.querySelector(".tr-type").value,
+      date:   row.querySelector(".tr-date").value   || null,
+      price:  +price,
+      shares: row.querySelector(".tr-shares").value ? +row.querySelector(".tr-shares").value : null
     };
   }).filter(Boolean);
 }
 
+function _autoInitTrade(t) {
+  if (t.user.bucket !== "portfolio") return;
+  if ((t.user.trades || []).length) return;
+  if (!t.user.entry_price_manual) return;
+  t.user.trades = [{ id: `tr_auto_${Date.now()}`, type: "buy", date: null, price: t.user.entry_price_manual, shares: t.user.entry_shares || null }];
+}
+
 function renderArchiveView() {
   const host = $("#portfolio-archive-root"); if (!host) return;
-  const TYPE_LABELS = { kauf: "Nachkauf", verkauf: "Verkauf", teilverkauf: "Teilverkauf" };
   const entries = [];
   for (const t of Store.state.tickers) {
-    for (const tr of (t.user.trades || [])) {
-      const isBuy  = tr.type === "kauf";
-      const pl_abs = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.shares != null)
-        ? +((tr.sell_price - tr.buy_price) * tr.shares).toFixed(2) : null;
-      const pl_pct = (!isBuy && tr.sell_price != null && tr.buy_price != null && tr.buy_price > 0)
-        ? +(((tr.sell_price - tr.buy_price) / tr.buy_price) * 100).toFixed(2) : null;
-      entries.push({ t, tr, pl_abs, pl_pct, isBuy });
+    const trades = t.user.trades || [];
+    /* weighted avg cost from all buy entries for this ticker */
+    const buys = trades.filter(tr => tr.type === "buy");
+    const totalBuyShares = buys.reduce((s, tr) => s + (tr.shares || 0), 0);
+    const avgCost = totalBuyShares > 0
+      ? buys.reduce((s, tr) => s + (tr.price || 0) * (tr.shares || 0), 0) / totalBuyShares
+      : (t.user.entry_price_manual || null);
+    for (const tr of trades) {
+      const isSell = tr.type === "sell";
+      const pl_abs = (isSell && tr.price != null && avgCost != null && tr.shares != null)
+        ? +((tr.price - avgCost) * tr.shares).toFixed(2) : null;
+      entries.push({ t, tr, pl_abs });
     }
   }
-  entries.sort((a, b) => ((b.tr.sell_date || b.tr.buy_date || "")).localeCompare((a.tr.sell_date || a.tr.buy_date || "")));
+  entries.sort((a, b) => (b.tr.date || "").localeCompare(a.tr.date || ""));
   if (!entries.length) {
     host.innerHTML = `<div class="tcard__empty">Noch keine Trades vorhanden.</div>`;
     return;
@@ -1317,17 +1302,15 @@ function renderArchiveView() {
   host.innerHTML = `
     <div class="arch-summary">Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></div>
     <table class="arch-table">
-      <thead><tr>
-        <th>Symbol</th><th>Typ</th><th>Datum</th><th>Kurs</th><th>Stück</th><th>P/L €</th><th>P/L %</th>
-      </tr></thead>
-      <tbody>${entries.map(({ t, tr, pl_abs, pl_pct, isBuy }) => `<tr>
-        <td><span class="sym-strong">${t.stamm.symbol}</span> <span class="dim" style="font-size:11px">${t.stamm.name || ""}</span></td>
-        <td><span class="pill">${TYPE_LABELS[tr.type] || "—"}</span></td>
-        <td class="dim">${(isBuy ? tr.buy_date : tr.sell_date) || "—"}</td>
-        <td>${numFmt(isBuy ? tr.buy_price : tr.sell_price)}</td>
+      <thead><tr><th>Symbol</th><th>Name</th><th>Datum</th><th>Typ</th><th>Kurs</th><th>Stück</th><th>P/L abs</th></tr></thead>
+      <tbody>${entries.map(({ t, tr, pl_abs }) => `<tr>
+        <td><span class="sym-strong">${t.stamm.symbol}</span></td>
+        <td class="dim">${t.stamm.name || "—"}</td>
+        <td class="dim">${tr.date || "—"}</td>
+        <td><span class="pill pill--${tr.type === "buy" ? "pos" : "neg"}">${tr.type === "buy" ? "Buy" : "Sell"}</span></td>
+        <td>${numFmt(tr.price)}</td>
         <td>${tr.shares != null ? numFmt(tr.shares, 0) : "—"}</td>
         <td class="${signCls(pl_abs)}">${pl_abs != null ? (pl_abs >= 0 ? "+" : "") + numFmt(pl_abs) : "—"}</td>
-        <td class="${signCls(pl_pct)}">${pl_pct != null ? pctFmt(pl_pct) : "—"}</td>
       </tr>`).join("")}
       </tbody>
     </table>`;
@@ -1369,6 +1352,7 @@ function saveEdit() {
   }
   t.user.alerts = collectAlertsFromEditor();
   t.user.trades = collectTradesFromEditor();
+  _autoInitTrade(t);
   Calc.recompute(t);
   Store.save();
   Render.bucket();
@@ -1605,6 +1589,7 @@ function bulkMoveToBucket(targetBucket) {
     const t = Store.byId(id); if (!t) { skipped++; continue; }
     if (t.user.bucket === targetBucket) { skipped++; continue; }
     t.user.bucket = targetBucket;
+    _autoInitTrade(t);
     moved++;
   }
   /* moved tickers might have left current view → drop them from selection */
@@ -1980,7 +1965,7 @@ function bindEvents() {
   });
   $("#edit-trade-add").addEventListener("click", () => {
     const cur = collectTradesFromEditor();
-    cur.push({ type: "verkauf", buy_price: null, sell_price: null, shares: null, buy_date: null, sell_date: null });
+    cur.push({ type: "buy", date: null, price: null, shares: null });
     renderTradeEditor(cur);
   });
 

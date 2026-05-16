@@ -513,6 +513,8 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .tbl .pill--strong { background: var(--text); color: #fff; }
 .tbl .pill--weak   { background: var(--surface); color: var(--muted); }
+.pill--pos { background: rgba(53,133,53,.15); color: var(--pos); }
+.pill--neg { background: rgba(239,66,66,.15);  color: var(--neg); }
 
 /* ────── ticker cards ────── */
 .card-list { display: grid; gap: var(--s-2); }
