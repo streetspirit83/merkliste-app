@@ -40,8 +40,15 @@ const emptyCalcs = () => ({
   signals: null, risk_management: null, smart_alerts: null
 });
 
+const BENCHMARK_DEFAULTS = [
+  { symbol: "^GDAXI", label: "DAX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
+  { symbol: "^GSPC",  label: "S&P", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
+  { symbol: "^IXIC",  label: "NDX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] }
+];
+
 const Schema = {
   tickers: [],
+  benchmarks: BENCHMARK_DEFAULTS.map(b => ({ ...b })),
   ui: {
     view:        CONFIG.defaults.view,
     bucket:      CONFIG.defaults.bucket,
@@ -66,6 +73,12 @@ const Store = {
         const parsed = JSON.parse(raw);
         // merge defensively — schema changes won't blow up old saves
         if (Array.isArray(parsed.tickers)) this.state.tickers = parsed.tickers;
+        if (Array.isArray(parsed.benchmarks)) {
+          parsed.benchmarks.forEach(b => {
+            const def = this.state.benchmarks.find(d => d.symbol === b.symbol);
+            if (def) Object.assign(def, b);
+          });
+        }
         if (parsed.ui) Object.assign(this.state.ui, parsed.ui);
         if (parsed.config) Object.assign(this.state.config, parsed.config);
         // reset transient selection
@@ -455,6 +468,33 @@ const API = {
     return out;
   },
 
+  /* Fetch benchmark indices (DAX, S&P, NDX) from Yahoo proxy and update Store.state.benchmarks */
+  async fetchBenchmarks(withHistory = false) {
+    const benchmarks = Store.state.benchmarks;
+    const results = await Promise.allSettled(benchmarks.map(b => {
+      const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
+      url.searchParams.set("symbol", b.symbol);
+      if (withHistory) url.searchParams.set("history", "1");
+      return fetch(url.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
+    }));
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled" || r.value.error) return;
+      const j = r.value;
+      const q = j.quote || j.meta || {};
+      const num = v => (v == null || v === "") ? null : +v;
+      benchmarks[i].price         = num(q.regularMarketPrice ?? q.price);
+      benchmarks[i].day_change_pct = num(q.regularMarketChangePercent ?? q.percent_change);
+      if (withHistory && Array.isArray(j.closes) && j.closes.length > 0) {
+        benchmarks[i].closes = j.closes.filter(n => n != null && !isNaN(+n)).map(Number);
+        const c = benchmarks[i].closes;
+        benchmarks[i].week_change_pct  = c.length >= 5  ? +((c[0] - c[4])  / c[4]  * 100).toFixed(2) : null;
+        benchmarks[i].month_change_pct = c.length >= 21 ? +((c[0] - c[20]) / c[20] * 100).toFixed(2) : null;
+      }
+    });
+    Store.save();
+    renderBenchBar();
+  },
+
   /* Heuristic: if user only set TD fields, derive Yahoo symbol from exchange */
   _guessYahooSymbol(t) {
     const s = t.stamm;
@@ -638,6 +678,8 @@ const Calc = {
       case "reversal_down_long":
         return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
           && prev.price >= prev.ma200 && q.price < q.ma200);
+      case "vol_spike":
+        return q.volume != null && q.avg_volume != null && q.avg_volume > 0 && q.volume >= alert.threshold * q.avg_volume;
       default: return false;
     }
   },
@@ -714,6 +756,7 @@ const Render = {
     this.menu();
     this.bulkbar();
     this.filterBtn();
+    renderBenchBar();
   },
   viewMode() {
     const { view, activeView } = Store.state.ui;
@@ -937,7 +980,7 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200" };
+  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×" };
   const out = alerts.map(a => {
     let lbl, v;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
@@ -946,7 +989,9 @@ function alertChips(t, inline) {
       v = "";
     } else {
       lbl = lblMap[a.type] || a.type;
-      v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold : numFmt(a.threshold);
+      v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold
+          : a.type === "vol_spike" ? `${a.threshold}×`
+          : numFmt(a.threshold);
     }
     const side = a.nk_side ? ` <span class="pill pill--${a.nk_side === "buy" ? "pos" : "neg"}" style="font-size:10px">${a.nk_side === "buy" ? "B" : "S"}${a.nk_shares != null ? " " + numFmt(a.nk_shares, 0) : ""}</span>` : "";
     return `<span class="alerts__chip ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}${side}</span>`;
@@ -1103,6 +1148,51 @@ function toast(msg, kind = "") {
   toastTimer = setTimeout(() => el.remove(), 2400);
 }
 
+/* ─── benchmark bar ─── */
+function renderBenchBar() {
+  const el = $("#benchbar"); if (!el) return;
+  const benchmarks = Store.state.benchmarks;
+
+  function pctSpan(v) {
+    if (v == null) return `<span class="bench__na">—</span>`;
+    const cls = v >= 0 ? "pos" : "neg";
+    return `<span class="bench__pct bench__pct--${cls}">${v >= 0 ? "+" : ""}${v.toFixed(1)}%</span>`;
+  }
+
+  function trendSegs(closes) {
+    if (!closes || closes.length < 2) {
+      return Array.from({ length: 5 }, () => `<span class="bench__seg bench__seg--flat"></span>`).join("");
+    }
+    // last 5 closes: closes[0]=newest
+    const slice = closes.slice(0, 6);
+    return Array.from({ length: Math.min(5, slice.length - 1) }, (_, i) => {
+      const cls = slice[i] >= slice[i + 1] ? "up" : "dn";
+      return `<span class="bench__seg bench__seg--${cls}"></span>`;
+    }).join("");
+  }
+
+  function rowHtml(b) {
+    const price = b.price != null ? b.price.toLocaleString("de-DE", { maximumFractionDigits: 0 }) : "—";
+    return `<div class="bench__row">
+      <span class="bench__label">${b.label}</span>
+      <span class="bench__price">${price}</span>
+      <span class="bench__segs">${trendSegs(b.closes)}</span>
+      <span class="bench__tf"><span class="bench__tf-lbl">1T</span>${pctSpan(b.day_change_pct)}</span>
+      <span class="bench__tf"><span class="bench__tf-lbl">1W</span>${pctSpan(b.week_change_pct)}</span>
+      <span class="bench__tf"><span class="bench__tf-lbl">1M</span>${pctSpan(b.month_change_pct)}</span>
+    </div>`;
+  }
+
+  const [dax, sp, ndx] = benchmarks;
+  el.innerHTML = `
+    ${rowHtml(dax)}
+    <div class="bench__row2">
+      ${rowHtml(sp)}
+      <span class="bench__divider"></span>
+      ${rowHtml(ndx)}
+    </div>`;
+}
+
 /* ─── modal open/close ─── */
 function openModal(sel) {
   const m = $(sel); if (!m) return;
@@ -1182,7 +1272,9 @@ function renderAlertEditor(alerts, t) {
   host.innerHTML = alerts.map((a, i) => {
     const noTh    = ALERT_NO_THRESHOLD.has(a.type);
     const needsMa = MA_PCT.has(a.type);
-    const pholder = needsMa ? "% Abstand" : "Schwelle";
+    const isVol   = a.type === "vol_spike";
+    const pholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : "Schwelle";
+    const defVal  = a.threshold ?? (needsMa ? 20 : isVol ? 2 : "");
     const maVal   = a.ma || "ma50";
     return `<div class="alert-row" data-idx="${i}">
       <div class="alert-row__main">
@@ -1199,13 +1291,14 @@ function renderAlertEditor(alerts, t) {
           <option value="reversal_down_short" ${a.type==="reversal_down_short"?"selected":""}>Trendwende ↓ kurzfristig (MACD)</option>
           <option value="reversal_up_long"    ${a.type==="reversal_up_long"   ?"selected":""}>Trendwende ↑ langfristig (MA200)</option>
           <option value="reversal_down_long"  ${a.type==="reversal_down_long" ?"selected":""}>Trendwende ↓ langfristig (MA200)</option>
+          <option value="vol_spike"           ${a.type==="vol_spike"          ?"selected":""}>Volumen Spike ≥ N×Ø</option>
         </select>
         <select class="al-ma" ${needsMa ? "" : "hidden"}>
           <option value="ma20"  ${maVal==="ma20" ?"selected":""}>MA20</option>
           <option value="ma50"  ${maVal==="ma50" ?"selected":""}>MA50</option>
           <option value="ma200" ${maVal==="ma200"?"selected":""}>MA200</option>
         </select>
-        <input class="al-th" type="number" step="any" value="${a.threshold ?? (needsMa ? 20 : "")}" placeholder="${pholder}" ${noTh?"hidden":""} />
+        <input class="al-th" type="number" step="any" value="${defVal}" placeholder="${pholder}" ${noTh?"hidden":""} />
         <button class="al-del" aria-label="Alert löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
       </div>
     </div>`;
@@ -1217,10 +1310,12 @@ function renderAlertEditor(alerts, t) {
       const row     = sel.closest(".alert-row");
       const noTh    = ALERT_NO_THRESHOLD.has(sel.value);
       const needsMa = MA_PCT.has(sel.value);
+      const isVol   = sel.value === "vol_spike";
       const thEl = row.querySelector(".al-th");
       thEl.hidden      = noTh;
-      thEl.placeholder = needsMa ? "% Abstand" : "Schwelle";
+      thEl.placeholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : "Schwelle";
       if (needsMa && !thEl.value) thEl.value = 20;
+      if (isVol   && !thEl.value) thEl.value = 2;
       row.querySelector(".al-ma").hidden = !needsMa;
     });
   });
@@ -1749,8 +1844,8 @@ async function runRefresh(refreshFn, list, label) {
     console.warn("[refresh] fatal", err);
   } finally { setRefreshLoading(false); }
 }
-const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label);
-const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label);
+const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label).then(() => API.fetchBenchmarks(false));
+const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label).then(() => API.fetchBenchmarks(true));
 const refreshBucket = b => refreshList(Store.state.tickers.filter(t => t.user.bucket === b), `${b} aktualisiert`);
 const refreshAll    = () => refreshList(Store.state.tickers, "Einträge aktualisiert");
 /* Smart bulk-refresh: with selection → only selected; empty selection → full current bucket */
@@ -1791,7 +1886,7 @@ function openAlertsOverview() {
   }
   // sort: triggered first
   items.sort((x, y) => (y.a._trig ? 1 : 0) - (x.a._trig ? 1 : 0));
-  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig" };
+  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig", vol_spike:"Volumen Spike ≥" };
   const body = $("#modal-alerts-body");
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
@@ -1807,6 +1902,9 @@ function openAlertsOverview() {
           ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
           : null;
         valLabel = absPrice != null ? numFmt(absPrice) : "—";
+      } else if (a.type === "vol_spike") {
+        typeLabel = lblMap[a.type] || a.type;
+        valLabel  = a.threshold != null ? `${a.threshold}×Ø` : "—";
       } else {
         typeLabel = lblMap[a.type] || a.type;
         valLabel  = numFmt(a.threshold);
