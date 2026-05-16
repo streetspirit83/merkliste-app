@@ -685,11 +685,17 @@ const Render = {
     this.filterBtn();
   },
   viewMode() {
-    const { view } = Store.state.ui;
+    const { view, activeView } = Store.state.ui;
+    const inScreener = activeView !== "portfolio";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
-    $("#screener-card-view") .hidden = view !== "cards";
-    $("#screener-table-view").hidden = view !== "table";
+    $("#subbar").hidden         = !inScreener;
+    $("#view-screener").hidden  = !inScreener;
+    $("#view-portfolio").hidden = inScreener;
+    if (inScreener) {
+      $("#screener-card-view") .hidden = view !== "cards";
+      $("#screener-table-view").hidden = view !== "table";
+    }
   },
   bucket() {
     const b = Store.state.ui.bucket;
@@ -1137,6 +1143,126 @@ function collectAlertsFromEditor() {
     return { type, threshold: +th };
   }).filter(Boolean);
 }
+
+function renderTradeEditor(trades) {
+  const host = $("#edit-trades-list"); if (!host) return;
+  if (!trades.length) { host.innerHTML = ""; return; }
+  host.innerHTML =
+    `<div class="trade-row__labels"><span>Typ</span><span>Datum</span><span>Kurs</span><span>Stück</span><span></span></div>` +
+    trades.map((tr, i) => `<div class="trade-row" data-idx="${i}">
+      <select class="tr-type">
+        <option value="buy"  ${(tr.type||"buy")==="buy" ?"selected":""}>Buy</option>
+        <option value="sell" ${tr.type==="sell"          ?"selected":""}>Sell</option>
+      </select>
+      <input class="tr-date"   type="date"   value="${tr.date   || ""}" />
+      <input class="tr-price"  type="number" step="any" value="${tr.price  ?? ""}" placeholder="Kurs" />
+      <input class="tr-shares" type="number" step="any" value="${tr.shares ?? ""}" placeholder="Stück" />
+      <button class="tr-del" aria-label="Löschen">✕</button>
+    </div>`).join("");
+  host.querySelectorAll(".tr-del").forEach(b => b.addEventListener("click", e => e.currentTarget.closest(".trade-row").remove()));
+}
+
+function collectTradesFromEditor() {
+  return $$("#edit-trades-list .trade-row").map((row, i) => {
+    const price  = row.querySelector(".tr-price").value;
+    if (!price) return null;
+    return {
+      id:     `tr_${Date.now()}_${i}`,
+      type:   row.querySelector(".tr-type").value,
+      date:   row.querySelector(".tr-date").value   || null,
+      price:  +price,
+      shares: row.querySelector(".tr-shares").value ? +row.querySelector(".tr-shares").value : null
+    };
+  }).filter(Boolean);
+}
+
+function _autoInitTrade(t) {
+  if (t.user.bucket !== "portfolio") return;
+  if ((t.user.trades || []).length) return;
+  if (!t.user.entry_price_manual) return;
+  t.user.trades = [{ id: `tr_auto_${Date.now()}`, type: "buy", date: null, price: t.user.entry_price_manual, shares: t.user.entry_shares || null }];
+}
+
+function _buildArchiveEntries() {
+  const entries = [];
+  for (const t of Store.state.tickers) {
+    const trades = t.user.trades || [];
+    if (!trades.length) continue;
+    const buys = trades.filter(tr => tr.type === "buy");
+    const totalBuyShares = buys.reduce((s, tr) => s + (tr.shares || 0), 0);
+    const avgCost = totalBuyShares > 0
+      ? buys.reduce((s, tr) => s + (tr.price || 0) * (tr.shares || 0), 0) / totalBuyShares
+      : (t.user.entry_price_manual || null);
+    for (const tr of trades) {
+      const pl_abs = (tr.type === "sell" && tr.price != null && avgCost != null && tr.shares != null)
+        ? +((tr.price - avgCost) * tr.shares).toFixed(2) : null;
+      entries.push({ t, tr, pl_abs, avgCost });
+    }
+  }
+  return entries.sort((a, b) => (b.tr.date || "").localeCompare(a.tr.date || ""));
+}
+
+function exportArchiveCsv() {
+  const entries = _buildArchiveEntries();
+  if (!entries.length) { toast("Keine Trades vorhanden", "neg"); return; }
+  const header = ["Symbol","Name","Datum","Typ","Kurs","Stück","P/L abs"];
+  const rows = entries.map(({ t, tr, pl_abs }) => [
+    t.stamm.symbol,
+    t.stamm.name || "",
+    tr.date || "",
+    tr.type === "buy" ? "Buy" : "Sell",
+    tr.price != null ? String(tr.price).replace(".", ",") : "",
+    tr.shares != null ? String(tr.shares).replace(".", ",") : "",
+    pl_abs != null ? String(pl_abs).replace(".", ",") : ""
+  ]);
+  const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = `trades_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function renderArchiveView() {
+  const host = $("#portfolio-archive-root"); if (!host) return;
+  const entries = _buildArchiveEntries();
+  if (!entries.length) {
+    host.innerHTML = `<div class="tcard__empty">Noch keine Trades vorhanden.<br><span class="dim" style="font-size:12px">Trades werden im Edit-Modal unter "Abgeschlossene Positionen" erfasst.</span></div>`;
+    return;
+  }
+  const totalPl = entries.reduce((s, e) => s + (e.pl_abs || 0), 0);
+  host.innerHTML = `
+    <div class="arch-summary">
+      <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></span>
+      <button class="btn-text" id="btn-arch-csv" style="margin-left:auto">
+        <i data-lucide="download" class="icon icon-sm"></i>
+        <span class="btn-text__label">CSV</span>
+      </button>
+    </div>
+    <table class="arch-table">
+      <thead><tr><th>Symbol</th><th>Name</th><th>Datum</th><th>Typ</th><th>Kurs</th><th>Stück</th><th>P/L abs</th></tr></thead>
+      <tbody>${entries.map(({ t, tr, pl_abs }) => `<tr>
+        <td><span class="sym-strong">${t.stamm.symbol}</span></td>
+        <td class="dim">${t.stamm.name || "—"}</td>
+        <td class="dim">${tr.date || "—"}</td>
+        <td><span class="pill pill--${tr.type === "buy" ? "pos" : "neg"}">${tr.type === "buy" ? "Buy" : "Sell"}</span></td>
+        <td>${numFmt(tr.price)}</td>
+        <td>${tr.shares != null ? numFmt(tr.shares, 0) : "—"}</td>
+        <td class="${signCls(pl_abs)}">${pl_abs != null ? (pl_abs >= 0 ? "+" : "") + numFmt(pl_abs) : "—"}</td>
+      </tr>`).join("")}
+      </tbody>
+    </table>`;
+  $("#btn-arch-csv")?.addEventListener("click", exportArchiveCsv);
+  if (window.lucide) lucide.createIcons();
+}
+
+function switchPfTab(tab) {
+  $$(".pf-tab").forEach(b => b.classList.toggle("is-active", b.dataset.pftab === tab));
+  $("#portfolio-perf-root").hidden    = tab !== "perf";
+  $("#portfolio-archive-root").hidden = tab !== "archive";
+  if (tab === "archive") renderArchiveView();
+}
+
 function saveEdit() {
   const id = Store.state.ui.editingId; if (!id) return;
   const t = Store.byId(id); if (!t) return;
@@ -1762,8 +1888,13 @@ function bindEvents() {
 let _currentInfoTicker = null;
 
 function switchView(view) {
-  $$("[data-view]").forEach(s => s.hidden = s.dataset.view !== view);
-  if (view === "portfolio") renderPortfolioPerf();
+  Store.patchUi({ activeView: view });
+  Render.viewMode();
+  if (view === "portfolio") {
+    const activeTab = $(".pf-tab.is-active")?.dataset?.pftab || "perf";
+    if (activeTab === "archive") renderArchiveView();
+    else renderPortfolioPerf();
+  }
 }
 
 function updatePromptText() {
