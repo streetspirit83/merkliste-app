@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Card Prototype — D & E</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ── tokens (same as app) ── */
+:root {
+  --bg:      #ffffff; --text:    #00171F;
+  --accent:  #00A8E8; --pos:     #348535; --neg:     #EF4242;
+  --surface: #E9E7E7; --border:  #D9D7D7; --muted:   #6b7378;
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
+  --r: 8px;
+}
+[data-theme="dark"] {
+  --bg: #0d1117; --text: #e6edf3; --surface: #161b22;
+  --border: #30363d; --muted: #8b949e;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { font-family: var(--font-sans); font-size: 14px; color: var(--text);
+  background: #f0f2f4; margin: 0; padding: 16px; }
+[data-theme="dark"] body { background: #010409; }
+
+/* ── layout chrome ── */
+.proto-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 24px;
+}
+.proto-header h1 { font-size: 16px; font-weight: 700; margin: 0; }
+.toggle-btn {
+  font: inherit; font-size: 12px; font-weight: 700;
+  padding: 6px 14px; border-radius: var(--r);
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); cursor: pointer;
+}
+.variant-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+  margin: 24px 0 10px;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+/* ── shared card shell ── */
+.tcard {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  position: relative;
+}
+.tcard.is-trig { border-color: var(--neg); }
+
+/* symbol / name */
+.tcard__sym  { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.tcard__name { font-size: 11px; color: var(--muted); white-space: nowrap;
+               overflow: hidden; text-overflow: ellipsis; }
+
+/* change pill */
+.chg { font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+       padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.chg--pos { color: var(--pos); background: rgba(53,133,53,.12); }
+.chg--neg { color: var(--neg); background: rgba(239,66,66,.10); }
+.chg--neu { color: var(--muted); background: var(--surface); }
+
+/* price */
+.tcard__price { font-family: var(--font-mono); font-weight: 700; font-size: 20px;
+                letter-spacing: -.02em; line-height: 1; }
+
+/* RSI badge */
+.rsi-badge { font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+             padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.rsi--ob  { color: var(--neg); background: rgba(239,66,66,.10); }   /* >70 */
+.rsi--os  { color: var(--pos); background: rgba(53,133,53,.12); }   /* <30 */
+.rsi--neu { color: var(--muted); background: var(--surface); }
+
+/* sentiment score */
+.sent-score { font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+.sent--bull { color: var(--pos); }
+.sent--bear { color: var(--neg); }
+.sent--neu  { color: var(--muted); }
+
+/* trend bar */
+.trend-bar { height: 5px; border-radius: 3px; background: var(--surface); overflow: hidden; }
+.trend-bar__fill { height: 100%; border-radius: 3px; transition: width .3s; }
+.trend-bar__fill--bull { background: var(--pos); }
+.trend-bar__fill--bear { background: var(--neg); }
+.trend-bar__fill--neu  { background: var(--muted); }
+
+/* sparkline svg wrapper */
+.spark-wrap { width: 100%; overflow: hidden; border-radius: 4px; }
+.spark-wrap svg { display: block; }
+
+/* action row */
+.tcard__actions { display: flex; gap: 6px; padding-top: 2px; }
+.act-btn { font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .03em;
+           text-transform: uppercase; color: var(--muted);
+           background: var(--surface); border: none;
+           padding: 5px 10px; border-radius: var(--r); cursor: pointer; flex: 1; }
+.act-btn:hover { color: var(--text); background: var(--border); }
+
+/* ════════════════════
+   VARIANT D
+   Left col: data  Right col: chart
+   ════════════════════ */
+.card-d .d-body { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
+.card-d .d-left { display: flex; flex-direction: column; gap: 5px; }
+.card-d .d-right { display: flex; flex-direction: column; gap: 5px; }
+.card-d .d-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.card-d .d-meta   { display: flex; align-items: center; gap: 5px; }
+.card-d .d-trendlabel { font-size: 11px; color: var(--muted); text-transform: uppercase;
+                        letter-spacing: .04em; font-weight: 700; }
+
+/* ════════════════════
+   VARIANT E
+   Full-width, breathing room
+   ════════════════════ */
+.card-e .e-header  { display: flex; justify-content: space-between; align-items: flex-start; }
+.card-e .e-subhead { display: flex; justify-content: space-between; align-items: center; }
+.card-e .e-badges  { display: flex; gap: 5px; align-items: center; }
+.card-e .e-footer  { display: flex; justify-content: space-between; align-items: center; }
+.card-e .e-sent    { display: flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+
+<div class="proto-header">
+  <h1>Card Prototypes — D &amp; E</h1>
+  <button class="toggle-btn" onclick="toggleDark()">Dark Mode</button>
+</div>
+
+<!-- ══════════════════════════════════════════
+     VARIANT D — Split: data left / chart right
+     ══════════════════════════════════════════ -->
+<div class="variant-label">Variant D — Split column</div>
+<div class="card-grid" id="grid-d"></div>
+
+<!-- ══════════════════════════════════════════
+     VARIANT E — Full-width, breathing room
+     ══════════════════════════════════════════ -->
+<div class="variant-label">Variant E — Full-width stacked</div>
+<div class="card-grid" id="grid-e"></div>
+
+<script>
+/* ── mock data ── */
+const MOCK = [
+  {
+    symbol: "NVDA", name: "Nvidia Corp",
+    price: 875.40, chg: +2.38,
+    rsi: 68, sent: "bullish", score: 72,
+    ma20: 840, ma50: 790, ma200: 620,
+    closes7d: [820, 835, 828, 855, 862, 869, 875],
+  },
+  {
+    symbol: "SAP", name: "SAP SE",
+    price: 182.64, chg: -0.72,
+    rsi: 48, sent: "neutral", score: 51,
+    ma20: 180, ma50: 175, ma200: 158,
+    closes7d: [179, 181, 184, 183, 180, 182, 183],
+  },
+  {
+    symbol: "BNTX", name: "BioNTech SE",
+    price: 93.12, chg: -3.14,
+    rsi: 28, sent: "bearish", score: 26,
+    ma20: 105, ma50: 112, ma200: 130,
+    closes7d: [112, 108, 103, 99, 96, 94, 93],
+  },
+];
+
+/* ── helpers ── */
+function chgClass(v) { return v > 0 ? "chg--pos" : v < 0 ? "chg--neg" : "chg--neu"; }
+function rsiClass(v) { return v >= 70 ? "rsi--ob" : v <= 30 ? "rsi--os" : "rsi--neu"; }
+function sentClass(s) { return s === "bullish" ? "sent--bull" : s === "bearish" ? "sent--bear" : "sent--neu"; }
+function trendClass(s) { return s === "bullish" ? "bull" : s === "bearish" ? "bear" : "neu"; }
+function fmt(v, dec=2) { return v != null ? v.toLocaleString("de-DE", { minimumFractionDigits: dec, maximumFractionDigits: dec }) : "—"; }
+function fmtChg(v) { return (v >= 0 ? "+" : "") + fmt(v) + "%"; }
+function sentLabel(s) { return s === "bullish" ? "Bullish" : s === "bearish" ? "Bearish" : "Neutral"; }
+
+/* ── SVG sparkline ── */
+function sparkSVG(d, height = 52, opts = {}) {
+  const { showMA = true, fullWidth = true } = opts;
+  const closes = d.closes7d;
+  const w = 200; // viewBox width (scales with CSS)
+
+  // range: include MAs so they're always visible within chart
+  const maVals = showMA ? [d.ma20, d.ma50, d.ma200].filter(v => v != null) : [];
+  const all = [...closes, ...maVals];
+  const pad = (Math.max(...all) - Math.min(...all)) * 0.12;
+  const minV = Math.min(...all) - pad;
+  const maxV = Math.max(...all) + pad;
+  const range = maxV - minV || 1;
+
+  const toX = i => (i / (closes.length - 1)) * w;
+  const toY = v => height - ((v - minV) / range) * (height - 4) - 2;
+
+  const pts = closes.map((c, i) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
+  const lastX = toX(closes.length - 1);
+  const lastY = toY(closes[closes.length - 1]);
+
+  const maLine = (val, dash, opacity, color = "var(--muted)") =>
+    val != null
+      ? `<line x1="0" y1="${toY(val).toFixed(1)}" x2="${w}" y2="${toY(val).toFixed(1)}"
+             stroke="${color}" stroke-width="1" stroke-dasharray="${dash}" opacity="${opacity}"/>`
+      : "";
+
+  const isPos = closes[closes.length - 1] >= closes[0];
+  const lineColor = isPos ? "var(--pos)" : "var(--neg)";
+
+  // subtle area fill
+  const areaClose = `${toX(closes.length-1).toFixed(1)},${height} 0,${height}`;
+  const area = `M 0,${toY(closes[0]).toFixed(1)} ` +
+    closes.slice(1).map((c, i) => `L ${toX(i+1).toFixed(1)},${toY(c).toFixed(1)}`).join(" ") +
+    ` L ${areaClose} Z`;
+
+  return `<svg viewBox="0 0 ${w} ${height}" width="100%" height="${height}" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="lg${d.symbol}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.18"/>
+        <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="${area}" fill="url(#lg${d.symbol})"/>
+    ${showMA ? maLine(d.ma200, "3 3", "0.45") : ""}
+    ${showMA ? maLine(d.ma50,  "5 2", "0.55", "var(--accent)") : ""}
+    ${showMA ? maLine(d.ma20,  "2 2", "0.70", "var(--accent)") : ""}
+    <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.8"
+              stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="3"
+            fill="${lineColor}" stroke="var(--bg)" stroke-width="1.5"/>
+  </svg>`;
+}
+
+/* ── trend bar HTML ── */
+function trendBarHTML(d) {
+  const tc = trendClass(d.sent);
+  return `<div class="trend-bar">
+    <div class="trend-bar__fill trend-bar__fill--${tc}" style="width:${d.score}%"></div>
+  </div>`;
+}
+
+/* ══════════════════════════════════════
+   VARIANT D — split column
+   ══════════════════════════════════════ */
+function cardD(d) {
+  return `<div class="tcard card-d">
+    <div class="d-header">
+      <div>
+        <div class="tcard__sym">${d.symbol}</div>
+        <div class="tcard__name">${d.name}</div>
+      </div>
+      <span class="chg ${chgClass(d.chg)}">${fmtChg(d.chg)}</span>
+    </div>
+
+    <div class="d-body">
+      <!-- left: numbers -->
+      <div class="d-left">
+        <div class="tcard__price">${fmt(d.price)}</div>
+        <div class="d-meta">
+          <span class="rsi-badge ${rsiClass(d.rsi)}">RSI ${d.rsi}</span>
+        </div>
+        <div class="d-meta">
+          <span class="d-trendlabel">${sentLabel(d.sent)}</span>
+          <span class="sent-score ${sentClass(d.sent)}">${d.score}</span>
+        </div>
+        ${trendBarHTML(d)}
+      </div>
+
+      <!-- right: chart -->
+      <div class="d-right">
+        <div class="spark-wrap">${sparkSVG(d, 72)}</div>
+      </div>
+    </div>
+
+    <div class="tcard__actions">
+      <button class="act-btn">ⓘ Info</button>
+      <button class="act-btn">✎ Edit</button>
+      <button class="act-btn">⊕ Calc</button>
+    </div>
+  </div>`;
+}
+
+/* ══════════════════════════════════════
+   VARIANT E — full-width stacked
+   ══════════════════════════════════════ */
+function cardE(d) {
+  return `<div class="tcard card-e">
+    <div class="e-header">
+      <div>
+        <div class="tcard__sym">${d.symbol}</div>
+        <div class="tcard__name">${d.name}</div>
+      </div>
+      <span class="chg ${chgClass(d.chg)}">${fmtChg(d.chg)}</span>
+    </div>
+
+    <div class="e-subhead">
+      <div class="tcard__price">${fmt(d.price)}</div>
+      <div class="e-badges">
+        <span class="rsi-badge ${rsiClass(d.rsi)}">RSI ${d.rsi}</span>
+        <span class="sent-score ${sentClass(d.sent)}">${sentLabel(d.sent)} ${d.score}</span>
+      </div>
+    </div>
+
+    <div class="spark-wrap">${sparkSVG(d, 60)}</div>
+
+    ${trendBarHTML(d)}
+
+    <div class="tcard__actions">
+      <button class="act-btn">ⓘ Info</button>
+      <button class="act-btn">✎ Edit</button>
+      <button class="act-btn">⊕ Calc</button>
+    </div>
+  </div>`;
+}
+
+/* ── render ── */
+document.getElementById("grid-d").innerHTML = MOCK.map(cardD).join("");
+document.getElementById("grid-e").innerHTML = MOCK.map(cardE).join("");
+
+function toggleDark() {
+  const el = document.documentElement;
+  el.dataset.theme = el.dataset.theme === "dark" ? "" : "dark";
+}
+</script>
+</body>
+</html>
