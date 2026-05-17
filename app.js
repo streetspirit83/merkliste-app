@@ -1091,7 +1091,7 @@ function sparkSVG(t) {
     const y = Math.max(0.5, Math.min(H - 0.5, toY(val))).toFixed(1);
     return `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${stroke}" stroke-width="${width}" stroke-dasharray="${dash}" opacity="${op}"/>`;
   };
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" style="display:block">
     <defs><linearGradient id="sg${t.id}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${col}" stop-opacity=".14"/>
       <stop offset="100%" stop-color="${col}" stop-opacity="0"/>
@@ -1116,7 +1116,7 @@ function maValueCol(t) {
     const style = [color ? `color:${color}` : "", bold ? "font-weight:700" : ""].filter(Boolean).join(";");
     return `<div class="tcard__maval-row"${style ? ` style="${style}"` : ""}>
       <span class="tcard__maval-lbl">${lbl}</span>
-      <span class="tcard__maval-num">${numFmt(val, 0)}</span>
+      <span class="tcard__maval-num">${numFmt(val, 2)}</span>
     </div>`;
   };
   return `<div class="tcard__ma-vals">
@@ -1182,15 +1182,12 @@ function cardPortfolio(t) {
   const grpPrice = t.price != null
     ? `<span class="tcard__hdg"><span class="tcard__hdg-val">${numFmt(t.price)}</span><span class="tcard__hdg-lbl">${ccy}</span><span class="${signCls(t.day_change_pct)} tcard__hdg-sub">(${pctFmt(t.day_change_pct)})</span></span>`
     : "";
-  const grpEntry = t.entry_price_manual != null
-    ? `<span class="tcard__hdg"><span class="tcard__hdg-lbl">EP</span><span class="tcard__hdg-val">${numFmt(t.entry_price_manual)}</span><span class="${signCls(t.performance_pct)} tcard__hdg-sub">(${pctFmt(t.performance_pct)})</span></span>`
-    : "";
   const grpPl    = t.position_pl_abs != null
-    ? `<span class="tcard__hdg"><span class="${signCls(t.position_pl_abs)} tcard__hdg-val">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}</span></span>`
+    ? `<span class="tcard__hdg"><span class="${signCls(t.position_pl_abs)} tcard__hdg-val">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}</span><span class="${signCls(t.performance_pct)} tcard__hdg-sub">(${pctFmt(t.performance_pct)})</span></span>`
     : "";
   const sep      = `<span class="tcard__hd-sep">|</span>`;
-  const rightGroups = [grpPrice, grpEntry, grpPl].filter(Boolean).join(sep);
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
+  const rightGroups = [grpPrice, grpPl].filter(Boolean).join(sep);
+  return `<article class="tcard has-select tcard--port ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
     ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
     <div class="tcard__hd">
@@ -1198,11 +1195,6 @@ function cardPortfolio(t) {
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
       ${shares}
       <div class="tcard__hd-right">${rightGroups}</div>
-    </div>
-    <div class="tcard__price-sub">
-      <span class="tcard__big-price">${numFmt(t.price)}</span>
-      ${ccy ? `<span class="tcard__hdg-lbl">${ccy}</span>` : ""}
-      <span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>
     </div>
     ${_cardBody(t)}
     ${actionsRow(t)}
