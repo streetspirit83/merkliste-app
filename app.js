@@ -62,7 +62,7 @@ const Schema = {
     editingId:   null,
     nachkaufId:  null
   },
-  config: { twelveDataKey: CONFIG.api.twelveData.key, eur_usd: null }
+  config: { twelveDataKey: CONFIG.api.twelveData.key, eur_usd: null, strategy_targets: { long: 50, swing: 30, breakout: 20 } }
 };
 
 const Store = {
@@ -2422,28 +2422,158 @@ function updatePromptText() {
   $("#info-prompt-text").value = fillPrompt(prompt.template, _currentInfoTicker);
 }
 
+function pfWaterfall(positions) {
+  const sorted  = [...positions].sort((a, b) => (b.performance_pct || 0) - (a.performance_pct || 0));
+  const maxAbs  = Math.max(...sorted.map(t => Math.abs(t.performance_pct || 0)), 0.1);
+  const clsP    = v => (v || 0) >= 0 ? "pos" : "neg";
+  return `<div class="pf-section">
+    <div class="pf-section__title">P/L je Position</div>
+    <div class="pf-waterfall">
+      ${sorted.map(t => {
+        const pct = t.performance_pct;
+        const w   = pct != null ? Math.max(2, Math.round(Math.abs(pct) / maxAbs * 100)) : 0;
+        const cls = clsP(pct);
+        return `<div class="pf-wf-row">
+          <span class="pf-wf-sym">${t.symbol}</span>
+          <div class="pf-wf-track">
+            <div class="pf-wf-bar ${cls}" style="width:${w}%"></div>
+          </div>
+          <span class="pf-wf-val ${cls}">${pct != null ? (pct >= 0 ? "+" : "") + numFmt(pct, 1) + "%" : "—"}</span>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
+function pfScatterMatrix(positions) {
+  const pts = positions.filter(t => t.rsi != null && t.sentiment_score != null);
+  if (!pts.length) return "";
+  const W = 320, H = 190;
+  const PL = 28, PR = 12, PT = 16, PB = 28;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const toX = s  => PL + ((Math.max(-1, Math.min(1, s)) + 1) / 2) * iW;
+  const toY = r  => PT + (1 - Math.max(0, Math.min(100, r)) / 100) * iH;
+  const qx  = toX(0), y70 = toY(70), y30 = toY(30);
+  const quadLabels = [
+    { x: PL + iW * 0.76, y: PT + 10, txt: "Stark & Heiß" },
+    { x: PL + iW * 0.24, y: PT + 10, txt: "Überkauft" },
+    { x: PL + iW * 0.76, y: H - PB - 6, txt: "Kaufzone" },
+    { x: PL + iW * 0.24, y: H - PB - 6, txt: "Schwach" },
+  ];
+  const dots = pts.map(t => {
+    const cx = toX(t.sentiment_score), cy = toY(t.rsi);
+    const fill = t.performance_pct == null ? "var(--muted)" : t.performance_pct >= 0 ? "var(--pos)" : "var(--neg)";
+    const labelX = cx + 7, labelY = cy + 3;
+    return `<g>
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${fill}" opacity=".85"/>
+      <text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="9" font-family="DM Sans,sans-serif" fill="var(--text)">${t.symbol}</text>
+    </g>`;
+  }).join("");
+  return `<div class="pf-section">
+    <div class="pf-section__title">RSI · Sentiment Matrix</div>
+    <div class="pf-scatter-wrap">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">
+        <rect x="${PL}" y="${PT}" width="${qx - PL}" height="${y70 - PT}" fill="var(--neg)" opacity=".04"/>
+        <rect x="${qx}" y="${PT}" width="${PL + iW - qx}" height="${y70 - PT}" fill="var(--pos)" opacity=".06"/>
+        <rect x="${PL}" y="${y30}" width="${qx - PL}" height="${PT + iH - y30}" fill="var(--muted)" opacity=".04"/>
+        <rect x="${qx}" y="${y30}" width="${PL + iW - qx}" height="${PT + iH - y30}" fill="var(--accent)" opacity=".05"/>
+        <line x1="${qx.toFixed(1)}" y1="${PT}" x2="${qx.toFixed(1)}" y2="${PT + iH}" stroke="var(--border)" stroke-width="1"/>
+        <line x1="${PL}" y1="${y70.toFixed(1)}" x2="${PL + iW}" y2="${y70.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+        <line x1="${PL}" y1="${y30.toFixed(1)}" x2="${PL + iW}" y2="${y30.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+        <text x="${PL - 4}" y="${y70.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">70</text>
+        <text x="${PL - 4}" y="${y30.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">30</text>
+        <text x="${PL}" y="${H - 4}" font-size="8" fill="var(--muted)">Bearish</text>
+        <text x="${PL + iW}" y="${H - 4}" font-size="8" text-anchor="end" fill="var(--muted)">Bullish</text>
+        ${quadLabels.map(l => `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" font-size="8" text-anchor="middle" fill="var(--muted)" opacity=".5">${l.txt}</text>`).join("")}
+        ${dots}
+      </svg>
+    </div>
+  </div>`;
+}
+
+function pfStrategySplit(allPortfolio) {
+  const STRATS  = ["long", "swing", "breakout"];
+  const LABELS  = { long: "Long", swing: "Swing", breakout: "Contrarian" };
+  const COLORS  = { long: "#3A82C4", swing: "#6EC6E6", breakout: "#9B6DFF" };
+  const targets = { ...({ long: 50, swing: 30, breakout: 20 }), ...(Store.state.config.strategy_targets || {}) };
+  const total   = allPortfolio.length || 1;
+  const counts  = { long: 0, swing: 0, breakout: 0 };
+  allPortfolio.forEach(t => { if (t.priority in counts) counts[t.priority]++; });
+
+  // donut
+  const CX = 56, CY = 56, RO = 46, RI = 26;
+  let angle = -Math.PI / 2;
+  const arc = (pct) => {
+    const a = pct * 2 * Math.PI;
+    const end = angle + a;
+    const x1o = CX + RO * Math.cos(angle), y1o = CY + RO * Math.sin(angle);
+    const x2o = CX + RO * Math.cos(end),   y2o = CY + RO * Math.sin(end);
+    const x1i = CX + RI * Math.cos(angle), y1i = CY + RI * Math.sin(angle);
+    const x2i = CX + RI * Math.cos(end),   y2i = CY + RI * Math.sin(end);
+    const lg  = a > Math.PI ? 1 : 0;
+    const d   = pct < 0.002 ? "" :
+      `M${x1i.toFixed(1)},${y1i.toFixed(1)} L${x1o.toFixed(1)},${y1o.toFixed(1)} A${RO},${RO},0,${lg},1,${x2o.toFixed(1)},${y2o.toFixed(1)} L${x2i.toFixed(1)},${y2i.toFixed(1)} A${RI},${RI},0,${lg},0,${x1i.toFixed(1)},${y1i.toFixed(1)} Z`;
+    angle = end;
+    return d;
+  };
+  const paths = STRATS.map(s => ({ s, d: arc(counts[s] / total), color: COLORS[s] }));
+  const donut = `<svg viewBox="0 0 112 112" width="112" height="112" style="flex-shrink:0">
+    ${paths.map(p => p.d ? `<path d="${p.d}" fill="${p.color}" opacity=".85"/>` : "").join("")}
+    <text x="${CX}" y="${CY - 5}" text-anchor="middle" font-size="13" font-weight="700" font-family="DM Mono,monospace" fill="var(--text)">${allPortfolio.length}</text>
+    <text x="${CX}" y="${CY + 11}" text-anchor="middle" font-size="9" font-family="DM Sans,sans-serif" fill="var(--muted)">Positionen</text>
+  </svg>`;
+
+  const rows = STRATS.map(s => {
+    const actual  = Math.round((counts[s] / total) * 100);
+    const tgt     = targets[s] || 0;
+    const diff    = actual - tgt;
+    const diffCls = diff > 5 ? "pos" : diff < -5 ? "neg" : "dim";
+    return `<div class="pf-split__row">
+      <span class="pf-split__lbl" style="color:${COLORS[s]}">${LABELS[s]}</span>
+      <div class="pf-split__bars">
+        <div class="pf-split__bar-wrap">
+          <div class="pf-split__bar" style="width:${actual}%;background:${COLORS[s]}"></div>
+          <span class="pf-split__pct">${actual}%</span>
+          <span class="pf-split__diff ${diffCls}" title="Abweichung vom Ziel">${diff >= 0 ? "+" : ""}${diff}%</span>
+        </div>
+        <div class="pf-split__bar-wrap pf-split__bar-wrap--target">
+          <div class="pf-split__bar pf-split__bar--target" style="width:${tgt}%;background:${COLORS[s]}"></div>
+          <span class="pf-split__pct--target">Ziel <input class="pf-split__input" data-strat="${s}" type="number" min="0" max="100" value="${tgt}"/>%</span>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  return `<div class="pf-section">
+    <div class="pf-section__title">Strategie-Mix</div>
+    <div class="pf-split">
+      <div class="pf-split__donut">${donut}</div>
+      <div class="pf-split__detail">${rows}</div>
+    </div>
+  </div>`;
+}
+
 function renderPortfolioPerf() {
   const host = $("#portfolio-perf-root");
   if (!host) return;
-  const positions = Store.state.tickers
+  const allPortfolio = Store.state.tickers
     .filter(t => t.user.bucket === "portfolio")
-    .map(t => flat(t))
-    .filter(t => t.position_value != null);
+    .map(t => flat(t));
+  const positions = allPortfolio.filter(t => t.position_value != null);
 
-  if (!positions.length) {
-    host.innerHTML = `<div class="tcard__empty">Keine Portfolio-Positionen mit Einstand + Stückzahl vorhanden.</div>`;
+  if (!allPortfolio.length) {
+    host.innerHTML = `<div class="tcard__empty">Keine Portfolio-Positionen vorhanden.</div>`;
     return;
   }
 
-  const totalValue   = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
-  const totalCost    = positions.reduce((s, t) => s + ((t._raw?.user?.entry_price_manual || 0) * (t._raw?.user?.entry_shares || 0)), 0);
-  const totalPlAbs   = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
-  const totalPlPct   = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
-  const clsP = v => v >= 0 ? "pos" : "neg";
+  const totalValue = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
+  const totalCost  = positions.reduce((s, t) => s + ((t._raw?.user?.entry_price_manual || 0) * (t._raw?.user?.entry_shares || 0)), 0);
+  const totalPlAbs = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
+  const totalPlPct = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
+  const clsP = v => (v || 0) >= 0 ? "pos" : "neg";
 
-  // treemap via SVG
   const W = 340, H = 160;
-  const treemap = buildTreemap(positions, W, H);
+  const treemap = positions.length ? buildTreemap(positions, W, H) : [];
 
   host.innerHTML = `
     <div class="pf-summary">
@@ -2456,21 +2586,20 @@ function renderPortfolioPerf() {
         <span class="pf-summary__val ${clsP(totalPlAbs)}">${totalPlAbs >= 0 ? "+" : ""}${numFmt(totalPlAbs, 0)} (${totalPlPct != null ? (totalPlPct >= 0 ? "+" : "") + numFmt(totalPlPct, 2) + "%" : "—"})</span>
       </div>
     </div>
-    <div class="pf-treemap-wrap">
+    ${treemap.length ? `<div class="pf-treemap-wrap">
       <svg class="pf-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
         ${treemap.map(r => {
           const perf = r.performance_pct;
           const fill = perf == null ? "var(--border)" : perf >= 0 ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})` : `rgba(239,66,66,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})`;
-          const textCol = "var(--text)";
           const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
           return `<g>
             <rect x="${r.x1+1}" y="${r.y1+1}" width="${fw-2}" height="${fh-2}" rx="4" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
-            ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="${textCol}" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
-            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="${textCol}" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${perf != null ? (perf>=0?"+":"")+numFmt(perf,1)+"%" : "—"}</text>` : ""}
+            ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
+            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${perf != null ? (perf>=0?"+":"")+numFmt(perf,1)+"%" : "—"}</text>` : ""}
           </g>`;
         }).join("")}
       </svg>
-    </div>
+    </div>` : ""}
     <div class="pf-positions">
       ${positions.sort((a,b) => (b.position_value||0)-(a.position_value||0)).map(t => `
         <div class="pf-pos">
@@ -2480,7 +2609,21 @@ function renderPortfolioPerf() {
           <span class="pf-pos__pl ${clsP(t.performance_pct || 0)}">${t.performance_pct != null ? (t.performance_pct>=0?"+":"")+numFmt(t.performance_pct,2)+"%" : "—"}</span>
           <span class="pf-pos__plabs ${clsP(t.position_pl_abs || 0)}">${t.position_pl_abs != null ? (t.position_pl_abs>=0?"+":"")+numFmt(t.position_pl_abs,0) : "—"}</span>
         </div>`).join("")}
-    </div>`;
+    </div>
+    ${positions.length ? pfWaterfall(positions) : ""}
+    ${positions.length ? pfScatterMatrix(positions) : ""}
+    ${pfStrategySplit(allPortfolio)}`;
+
+  host.querySelectorAll(".pf-split__input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const targets = Store.state.config.strategy_targets || {};
+      host.querySelectorAll(".pf-split__input").forEach(el => {
+        targets[el.dataset.strat] = Math.max(0, Math.min(100, +el.value || 0));
+      });
+      Store.patchConfig({ strategy_targets: targets });
+      renderPortfolioPerf();
+    });
+  });
 }
 
 function buildTreemap(positions, W, H) {
