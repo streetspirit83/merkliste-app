@@ -62,7 +62,7 @@ const Schema = {
     editingId:   null,
     nachkaufId:  null
   },
-  config: { twelveDataKey: CONFIG.api.twelveData.key }
+  config: { twelveDataKey: CONFIG.api.twelveData.key, eur_usd: null }
 };
 
 const Store = {
@@ -560,6 +560,21 @@ const API = {
     };
     const closes = Array.isArray(j.closes) ? j.closes.filter(n => n != null && !isNaN(+n)).map(n => +n) : null;
     return { quote, closes };
+  },
+
+  async fetchEurUsd() {
+    const k = Store.state.config.twelveDataKey;
+    if (!k) return;
+    try {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/exchange_rate`);
+      url.searchParams.set("symbol", "EUR/USD");
+      url.searchParams.set("apikey", k);
+      const r = await fetch(url.toString());
+      if (!r.ok) return;
+      const j = await r.json();
+      const rate = j.rate ? +j.rate : null;
+      if (rate && rate > 0) Store.patchConfig({ eur_usd: rate });
+    } catch { /* silent — conversion falls back to raw price */ }
   }
 };
 
@@ -651,9 +666,12 @@ const Calc = {
 
   /* performance & position values from manual entry data */
   position(t) {
-    const price = t.quotes.price;
-    const entry = t.user.entry_price_manual;
-    const sh    = t.user.entry_shares;
+    const rawPrice = t.quotes.price;
+    const ccy      = t.quotes.currency_returned || t.stamm?.currency;
+    const rate     = Store.state.config.eur_usd;
+    const price    = (ccy === "USD" && rate) ? +(rawPrice / rate).toFixed(4) : rawPrice;
+    const entry    = t.user.entry_price_manual;
+    const sh       = t.user.entry_shares;
     if (price == null || entry == null) return { performance_pct: null, performance_abs: null, position_value: null, position_pl_abs: null };
     const performance_abs = +(price - entry).toFixed(2);
     const performance_pct = +((performance_abs / entry) * 100).toFixed(2);
@@ -732,6 +750,10 @@ const Calc = {
 function flat(t) {
   const s = t.stamm, u = t.user, q = t.quotes;
   const c = (t.calculations && t.calculations.trends) || {};
+  const rate    = Store.state.config.eur_usd;
+  const rawCcy  = q.currency_returned || s.currency;
+  const price   = (rawCcy === "USD" && rate && q.price != null) ? +(q.price / rate).toFixed(4) : q.price;
+  const displayCcy = (rawCcy === "USD" && rate) ? "EUR" : rawCcy;
   return {
     id: t.id, _raw: t,
     symbol: s.symbol, name: s.name, exchange: s.exchange,
@@ -741,7 +763,7 @@ function flat(t) {
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
     entry_price_manual: u.entry_price_manual, entry_shares: u.entry_shares,
     alerts: u.alerts || [],
-    price: q.price, currency_returned: q.currency_returned, day_change_pct: q.day_change_pct,
+    price, currency_returned: displayCcy, day_change_pct: q.day_change_pct,
     volume: q.volume, avg_volume: q.avg_volume,
     pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low, high_52w: q.high_52w, low_52w: q.low_52w,
     rsi: q.rsi, macd: q.macd, macd_signal: q.macd_signal, macd_histogram: q.macd_histogram,
@@ -1980,6 +2002,7 @@ function bulkDelete() {
 async function refreshOne(id) {
   const t = Store.byId(id); if (!t) return;
   try {
+    await API.fetchEurUsd();
     await API.refreshOne(t);
     Calc.recompute(t); Store.save(); Render.bucket();
     toast(`${t.stamm.symbol} aktualisiert`, "pos");
@@ -1990,6 +2013,7 @@ async function runRefresh(refreshFn, list, label) {
   if (!list.length) { toast("Nichts zu aktualisieren", "neg"); return; }
   setRefreshLoading(true);
   try {
+    await API.fetchEurUsd();
     const res = await refreshFn(list);
     list.forEach(Calc.recompute);
     Store.save();
@@ -2153,6 +2177,9 @@ async function loadBlob({ silent = true } = {}) {
 /* ─── CONFIG modal ─── */
 function openConfig() {
   $("#cfg-twelvedata").value = Store.state.config.twelveDataKey || "";
+  const rate = Store.state.config.eur_usd;
+  const rateEl = $("#cfg-eur-usd-info");
+  if (rateEl) rateEl.textContent = rate ? `EUR/USD: ${rate.toFixed(4)}` : "EUR/USD: nicht geladen";
   openModal("#modal-config");
 }
 function saveConfig() {
