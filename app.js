@@ -1068,26 +1068,28 @@ function sparkSVG(t) {
     return `<div class="tcard__spark-empty"></div>`;
   }
   const W = 200, H = 56;
-  const maVals = [t.ma20, t.ma50, t.ma200].filter(Boolean);
-  const all = [...closes, ...maVals];
+  const isPort = t.bucket === "portfolio";
+  const extras = [t.ma20, t.ma50, t.ma200, t.high_52w, t.low_52w,
+                  isPort ? t.entry_price_manual : null].filter(v => v != null);
+  const all    = [...closes, ...extras];
   const rawMin = Math.min(...all), rawMax = Math.max(...all);
-  const pad = (rawMax - rawMin) * 0.1 || rawMin * 0.02 || 1;
-  const minV = rawMin - pad, maxV = rawMax + pad;
-  const rng = maxV - minV;
-  const toX = i => (i / (closes.length - 1)) * W;
-  const toY = v => H - ((v - minV) / rng) * H;
-  const pts  = closes.map((c, i) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
-  const lx   = toX(closes.length - 1).toFixed(1);
-  const ly   = toY(closes[closes.length - 1]).toFixed(1);
-  const isPos = closes[closes.length - 1] >= closes[0];
-  const col   = isPos ? "var(--pos)" : "var(--neg)";
-  const area  = `M0,${toY(closes[0]).toFixed(1)} `
+  const pad    = (rawMax - rawMin) * 0.1 || rawMin * 0.02 || 1;
+  const minV   = rawMin - pad, maxV = rawMax + pad;
+  const rng    = maxV - minV;
+  const toX    = i => (i / (closes.length - 1)) * W;
+  const toY    = v => H - ((v - minV) / rng) * H;
+  const pts    = closes.map((c, i) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
+  const lx     = toX(closes.length - 1).toFixed(1);
+  const ly     = toY(closes[closes.length - 1]).toFixed(1);
+  const isPos  = closes[closes.length - 1] >= closes[0];
+  const col    = isPos ? "var(--pos)" : "var(--neg)";
+  const area   = `M0,${toY(closes[0]).toFixed(1)} `
     + closes.slice(1).map((c, i) => `L${toX(i + 1).toFixed(1)},${toY(c).toFixed(1)}`).join(" ")
     + ` L${W},${H} L0,${H} Z`;
-  const hline = (val, dash, stroke, op) => {
+  const hline = (val, dash, stroke, width, op) => {
     if (val == null) return "";
     const y = Math.max(0.5, Math.min(H - 0.5, toY(val))).toFixed(1);
-    return `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${stroke}" stroke-width="1" stroke-dasharray="${dash}" opacity="${op}"/>`;
+    return `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${stroke}" stroke-width="${width}" stroke-dasharray="${dash}" opacity="${op}"/>`;
   };
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none">
     <defs><linearGradient id="sg${t.id}" x1="0" y1="0" x2="0" y2="1">
@@ -1095,13 +1097,36 @@ function sparkSVG(t) {
       <stop offset="100%" stop-color="${col}" stop-opacity="0"/>
     </linearGradient></defs>
     <path d="${area}" fill="url(#sg${t.id})"/>
-    ${hline(t.ma200, "4 3", "var(--muted)",  ".50")}
-    ${hline(t.ma50,  "4 2", "var(--accent)", ".40")}
-    ${hline(t.ma20,  "2 2", "var(--accent)", ".70")}
+    ${hline(t.high_52w, "3 3", "#888", 1, ".45")}
+    ${hline(t.low_52w,  "3 3", "#888", 1, ".45")}
+    ${hline(t.ma200, "", "#1B4E8C", 1, ".70")}
+    ${hline(t.ma50,  "", "#3A82C4", 1, ".65")}
+    ${hline(t.ma20,  "", "#6EC6E6", 1, ".80")}
+    ${isPort ? hline(t.entry_price_manual, "", "#9B6DFF", 2, ".90") : ""}
     <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8"
       stroke-linejoin="round" stroke-linecap="round"/>
     <circle cx="${lx}" cy="${ly}" r="3" fill="${col}" stroke="var(--bg)" stroke-width="1.5"/>
   </svg>`;
+}
+
+function maValueCol(t) {
+  const isPort = t.bucket === "portfolio";
+  const row = (lbl, val, color, bold) => {
+    if (val == null) return "";
+    const style = [color ? `color:${color}` : "", bold ? "font-weight:700" : ""].filter(Boolean).join(";");
+    return `<div class="tcard__maval-row"${style ? ` style="${style}"` : ""}>
+      <span class="tcard__maval-lbl">${lbl}</span>
+      <span class="tcard__maval-num">${numFmt(val, 0)}</span>
+    </div>`;
+  };
+  return `<div class="tcard__ma-vals">
+    ${row("MA20",  t.ma20,  "#6EC6E6")}
+    ${row("MA50",  t.ma50,  "#3A82C4")}
+    ${row("MA200", t.ma200, "#1B4E8C")}
+    ${row("52H",   t.high_52w,  null)}
+    ${row("52T",   t.low_52w,   null)}
+    ${isPort ? row("EP", t.entry_price_manual, "#9B6DFF", true) : ""}
+  </div>`;
 }
 
 function _cardBody(t) {
@@ -1111,7 +1136,10 @@ function _cardBody(t) {
   </div>`;
   return `<div class="tcard__body">
     <div class="tcard__chart">
-      ${sparkSVG(t)}
+      <div class="tcard__chart-row">
+        <div class="tcard__spark">${sparkSVG(t)}</div>
+        ${maValueCol(t)}
+      </div>
       ${sparkPcts}
     </div>
     <div class="tcard__metrics">
@@ -1149,21 +1177,31 @@ function cardWatchlist(t) {
 }
 
 function cardPortfolio(t) {
-  const plSign = signCls(t.performance_pct);
-  const plRow = t.performance_pct != null
-    ? `<span class="${plSign}">${pctFmt(t.performance_pct)}</span>
-       <span class="dim" style="font-size:var(--fs-l)">(${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)})</span>`
-    : `<span class="dim">—</span>`;
+  const ccy      = t.currency_returned || t.currency || "";
+  const shares   = t.entry_shares != null ? `<span class="pill pill--sm">${numFmt(t.entry_shares, 0)}&thinsp;St.</span>` : "";
+  const grpPrice = t.price != null
+    ? `<span class="tcard__hdg"><span class="tcard__hdg-val">${numFmt(t.price)}</span><span class="tcard__hdg-lbl">${ccy}</span><span class="${signCls(t.day_change_pct)} tcard__hdg-sub">(${pctFmt(t.day_change_pct)})</span></span>`
+    : "";
+  const grpEntry = t.entry_price_manual != null
+    ? `<span class="tcard__hdg"><span class="tcard__hdg-lbl">EP</span><span class="tcard__hdg-val">${numFmt(t.entry_price_manual)}</span><span class="${signCls(t.performance_pct)} tcard__hdg-sub">(${pctFmt(t.performance_pct)})</span></span>`
+    : "";
+  const grpPl    = t.position_pl_abs != null
+    ? `<span class="tcard__hdg"><span class="${signCls(t.position_pl_abs)} tcard__hdg-val">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}</span></span>`
+    : "";
+  const sep      = `<span class="tcard__hd-sep">|</span>`;
+  const rightGroups = [grpPrice, grpEntry, grpPl].filter(Boolean).join(sep);
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
     ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
     <div class="tcard__hd">
       <span class="tcard__sym">${t.symbol}</span>
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
-      <div class="tcard__hd-right">${plRow}</div>
+      ${shares}
+      <div class="tcard__hd-right">${rightGroups}</div>
     </div>
     <div class="tcard__price-sub">
       <span class="tcard__big-price">${numFmt(t.price)}</span>
+      ${ccy ? `<span class="tcard__hdg-lbl">${ccy}</span>` : ""}
       <span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>
     </div>
     ${_cardBody(t)}
