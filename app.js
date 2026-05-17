@@ -27,6 +27,7 @@ const emptyQuotes = () => ({
   ma20: null, ma20_delta_pct: null,
   ma50: null, ma50_delta_pct: null,
   ma200: null, ma200_delta_pct: null,
+  last7d: null,
   ts: null, _source: null, _api_meta: null
 });
 const emptyCalcs = () => ({
@@ -400,6 +401,7 @@ const API = {
       if (tsEntry && !tsEntry._error && Array.isArray(tsEntry) && tsEntry.length) {
         const indicators = Calc.indicatorsFromCloses(tsEntry, t.quotes.price);
         Object.assign(t.quotes, indicators);
+        t.quotes.last7d = tsEntry.slice(-7); // ascending: oldest→newest
       }
 
       const qOk  = qEntry  && !qEntry._error;
@@ -429,6 +431,8 @@ const API = {
         if (Array.isArray(y.closes) && y.closes.length) {
           const indicators = Calc.indicatorsFromCloses(y.closes, r.ticker.quotes.price);
           Object.assign(r.ticker.quotes, indicators);
+          // Yahoo closes are descending; reverse to ascending for sparkline
+          r.ticker.quotes.last7d = [...y.closes].reverse().slice(-7);
           recoveredHist.add(r.symbol);
         }
         r.ticker.quotes._source = "yahoo";
@@ -744,6 +748,7 @@ function flat(t) {
     ma20: q.ma20, ma20_delta_pct: q.ma20_delta_pct,
     ma50: q.ma50, ma50_delta_pct: q.ma50_delta_pct,
     ma200: q.ma200, ma200_delta_pct: q.ma200_delta_pct,
+    last7d: q.last7d || null,
     ts: q.ts,
     sentiment_score: c.sentiment_score, trend_strength: c.trend_strength,
     performance_pct: c.performance_pct, performance_abs: c.performance_abs,
@@ -1024,9 +1029,9 @@ function actionsRow(t) {
         <img src="https://avatars.githubusercontent.com/u/30304?s=200&v=4" class="tcard__ext-icon" alt="ST" />
        </a>` : "";
   return `<div class="tcard__actions">
-    <button class="tcard__act btn-info" data-id="${t.id}" aria-label="Details" title="Details"><i data-lucide="info" class="icon icon-sm"></i></button>
-    <button class="tcard__act btn-edit" data-id="${t.id}" aria-label="Bearbeiten" title="Bearbeiten"><i data-lucide="pencil" class="icon icon-sm"></i></button>
-    ${isPort ? `<button class="tcard__act btn-nk" data-id="${t.id}" aria-label="Nachkauf" title="Nachkauf-Kalkulator"><i data-lucide="calculator" class="icon icon-sm"></i></button>` : ""}
+    <button class="tcard__act btn-info" data-id="${t.id}" aria-label="Details" title="Details"><i data-lucide="info" class="icon icon-sm"></i><span class="tcard__act-lbl">Info</span></button>
+    <button class="tcard__act btn-edit" data-id="${t.id}" aria-label="Bearbeiten" title="Bearbeiten"><i data-lucide="pencil" class="icon icon-sm"></i><span class="tcard__act-lbl">Edit</span></button>
+    ${isPort ? `<button class="tcard__act btn-nk" data-id="${t.id}" aria-label="Nachkauf" title="Nachkauf-Kalkulator"><i data-lucide="calculator" class="icon icon-sm"></i><span class="tcard__act-lbl">Calc</span></button>` : ""}
     <span class="tcard__ext-links">${tvLink}${stLink}</span>
   </div>`;
 }
@@ -1049,53 +1054,119 @@ function selectChip(t) {
   return `<input type="checkbox" class="tcard__select card-select" data-id="${t.id}" aria-label="Wähle ${t.symbol}" ${checked ? "checked" : ""} />`;
 }
 
+function volChip(t) {
+  if (t.volume == null || t.avg_volume == null || t.avg_volume === 0) return "";
+  const ratio = t.volume / t.avg_volume;
+  const cls = ratio >= 2 ? "pos" : "dim";
+  const arrow = ratio >= 2 ? "↑ " : "";
+  return `<span><span class="tcard__label">Vol</span><span class="${cls}">${arrow}${numFmt(ratio, 1)}×</span></span>`;
+}
+
+function sparkSVG(t) {
+  const closes = t.last7d;
+  if (!closes || closes.length < 2) {
+    return `<div class="tcard__spark-empty"></div>`;
+  }
+  const W = 200, H = 56;
+  const maVals = [t.ma20, t.ma50, t.ma200].filter(Boolean);
+  const all = [...closes, ...maVals];
+  const rawMin = Math.min(...all), rawMax = Math.max(...all);
+  const pad = (rawMax - rawMin) * 0.1 || rawMin * 0.02 || 1;
+  const minV = rawMin - pad, maxV = rawMax + pad;
+  const rng = maxV - minV;
+  const toX = i => (i / (closes.length - 1)) * W;
+  const toY = v => H - ((v - minV) / rng) * H;
+  const pts  = closes.map((c, i) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
+  const lx   = toX(closes.length - 1).toFixed(1);
+  const ly   = toY(closes[closes.length - 1]).toFixed(1);
+  const isPos = closes[closes.length - 1] >= closes[0];
+  const col   = isPos ? "var(--pos)" : "var(--neg)";
+  const area  = `M0,${toY(closes[0]).toFixed(1)} `
+    + closes.slice(1).map((c, i) => `L${toX(i + 1).toFixed(1)},${toY(c).toFixed(1)}`).join(" ")
+    + ` L${W},${H} L0,${H} Z`;
+  const hline = (val, dash, stroke, op) => {
+    if (val == null) return "";
+    const y = Math.max(0.5, Math.min(H - 0.5, toY(val))).toFixed(1);
+    return `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${stroke}" stroke-width="1" stroke-dasharray="${dash}" opacity="${op}"/>`;
+  };
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none">
+    <defs><linearGradient id="sg${t.id}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${col}" stop-opacity=".14"/>
+      <stop offset="100%" stop-color="${col}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#sg${t.id})"/>
+    ${hline(t.ma200, "4 3", "var(--muted)",  ".50")}
+    ${hline(t.ma50,  "4 2", "var(--accent)", ".40")}
+    ${hline(t.ma20,  "2 2", "var(--accent)", ".70")}
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lx}" cy="${ly}" r="3" fill="${col}" stroke="var(--bg)" stroke-width="1.5"/>
+  </svg>`;
+}
+
+function _cardBody(t) {
+  const sparkPcts = `<div class="tcard__spark-pcts">
+    ${maChip("MA20", t.ma20_delta_pct)}
+    ${maChip("MA200", t.ma200_delta_pct)}
+  </div>`;
+  return `<div class="tcard__body">
+    <div class="tcard__chart">
+      ${sparkSVG(t)}
+      ${sparkPcts}
+    </div>
+    <div class="tcard__metrics">
+      <div>${rsiChip(t)}</div>
+      <div>${volChip(t)}</div>
+      <div>${trendChip(t)}</div>
+    </div>
+  </div>`;
+}
+
 function cardNeutral(t) {
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
-      <span class="tcard__sep">|</span>${priceLine(t)}
-      <span class="tcard__sep">|</span>${maChip("MA20", t.ma20_delta_pct)}
-      <span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
+    <div class="tcard__hd">
+      <span class="tcard__sym">${t.symbol}</span>
+      ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
+      <div class="tcard__hd-right">${priceLine(t)}</div>
     </div>
-    <div class="tcard__row">
-      ${trendChip(t)}<span class="tcard__sep">|</span>${rsiChip(t)}<span class="tcard__sep">|</span>${sentChip(t)}
-    </div>
+    ${_cardBody(t)}
     ${actionsRow(t)}
   </article>`;
 }
+
 function cardWatchlist(t) {
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
-      <span class="tcard__sep">|</span>${priceLine(t)}
-      <span class="tcard__sep">|</span>${maChip("MA20", t.ma20_delta_pct)}
-      <span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
+    <div class="tcard__hd">
+      <span class="tcard__sym">${t.symbol}</span>
+      ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
+      <div class="tcard__hd-right">${priceLine(t)}</div>
     </div>
-    <div class="tcard__row">
-      ${trendChip(t)}<span class="tcard__sep">|</span>${rsiChip(t)}<span class="tcard__sep">|</span>${sentChip(t)}
-    </div>
-    ${alertChips(t)}
+    ${_cardBody(t)}
     ${actionsRow(t)}
   </article>`;
 }
+
 function cardPortfolio(t) {
+  const plSign = signCls(t.performance_pct);
+  const plRow = t.performance_pct != null
+    ? `<span class="${plSign}">${pctFmt(t.performance_pct)}</span>
+       <span class="dim" style="font-size:var(--fs-l)">(${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)})</span>`
+    : `<span class="dim">—</span>`;
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
     ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
-    <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
-      <span class="tcard__sep">|</span>${plChip(t)}
-      <span class="tcard__sep">|</span><span><span class="tcard__label">Preis</span>${numFmt(t.price)} <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>
+    <div class="tcard__hd">
+      <span class="tcard__sym">${t.symbol}</span>
+      ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
+      <div class="tcard__hd-right">${plRow}</div>
     </div>
-    <div class="tcard__row">
-      ${trendChip(t)}<span class="tcard__sep">|</span>${rsiChip(t)}<span class="tcard__sep">|</span>${sentChip(t)}
+    <div class="tcard__price-sub">
+      <span class="tcard__big-price">${numFmt(t.price)}</span>
+      <span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>
     </div>
-    <div class="tcard__row">
-      ${maChip("MA20", t.ma20_delta_pct)}<span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
-      ${t.alerts && t.alerts.length ? '<span class="tcard__sep">|</span>' + alertChips(t, true) : ""}
-    </div>
+    ${_cardBody(t)}
     ${actionsRow(t)}
   </article>`;
 }
