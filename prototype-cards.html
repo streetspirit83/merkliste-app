@@ -1,333 +1,403 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Card Prototype — D & E</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Card Prototype v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
-/* ── tokens (same as app) ── */
 :root {
-  --bg:      #ffffff; --text:    #00171F;
-  --accent:  #00A8E8; --pos:     #348535; --neg:     #EF4242;
-  --surface: #E9E7E7; --border:  #D9D7D7; --muted:   #6b7378;
-  --font-sans: "DM Sans", system-ui, sans-serif;
-  --font-mono: "DM Mono", ui-monospace, monospace;
-  --r: 8px;
+  --bg:#fff; --text:#00171F; --accent:#00A8E8;
+  --pos:#348535; --neg:#EF4242; --surface:#E9E7E7;
+  --border:#D9D7D7; --muted:#6b7378;
+  --font-sans:"DM Sans",system-ui,sans-serif;
+  --font-mono:"DM Mono",ui-monospace,monospace;
+  --r:8px;
 }
-[data-theme="dark"] {
-  --bg: #0d1117; --text: #e6edf3; --surface: #161b22;
-  --border: #30363d; --muted: #8b949e;
+[data-theme=dark]{
+  --bg:#0d1117; --text:#e6edf3; --surface:#161b22;
+  --border:#30363d; --muted:#8b949e;
 }
-*, *::before, *::after { box-sizing: border-box; }
-body { font-family: var(--font-sans); font-size: 14px; color: var(--text);
-  background: #f0f2f4; margin: 0; padding: 16px; }
-[data-theme="dark"] body { background: #010409; }
+*,*::before,*::after{box-sizing:border-box;}
+body{font-family:var(--font-sans);font-size:14px;color:var(--text);
+  background:#f0f2f4;margin:0;padding:16px;}
+[data-theme=dark] body{background:#010409;}
 
-/* ── layout chrome ── */
-.proto-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 24px;
-}
-.proto-header h1 { font-size: 16px; font-weight: 700; margin: 0; }
-.toggle-btn {
-  font: inherit; font-size: 12px; font-weight: 700;
-  padding: 6px 14px; border-radius: var(--r);
-  border: 1px solid var(--border); background: var(--bg);
-  color: var(--text); cursor: pointer;
-}
-.variant-label {
-  font-size: 11px; font-weight: 700; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--muted);
-  margin: 24px 0 10px;
-}
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
-  margin-bottom: 32px;
+/* ── chrome ── */
+.proto-top{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
+.proto-top h1{font-size:15px;font-weight:700;margin:0;flex:1;}
+.tbtn{font:inherit;font-size:12px;font-weight:700;padding:5px 13px;
+  border-radius:var(--r);border:1px solid var(--border);
+  background:var(--bg);color:var(--text);cursor:pointer;}
+.sect{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);margin:24px 0 10px;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+  gap:12px;margin-bottom:4px;}
+
+/* ══════════════════════════════
+   SHARED CARD SHELL
+══════════════════════════════ */
+.tcard{
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--r);overflow:hidden;
+  display:flex;flex-direction:column;
 }
 
-/* ── shared card shell ── */
-.tcard {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 12px;
-  display: flex; flex-direction: column; gap: 8px;
-  position: relative;
+/* ── header row ── */
+.card-hd{
+  display:grid;grid-template-columns:auto 1fr auto;
+  align-items:center;gap:8px;
+  padding:10px 12px 8px;
+  border-bottom:1px solid var(--surface);
 }
-.tcard.is-trig { border-color: var(--neg); }
+.card-check{display:flex;align-items:center;cursor:pointer;}
+.card-check input{width:14px;height:14px;accent-color:var(--accent);}
+.sym{font-weight:700;font-size:15px;letter-spacing:-.01em;display:block;}
+.name{font-size:11px;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:130px;display:block;}
+.card-price-wrap{text-align:right;white-space:nowrap;}
+.card-pl-wrap{text-align:right;white-space:nowrap;line-height:1.3;}
+.price-line{font-family:var(--font-mono);font-weight:700;font-size:15px;display:block;}
+.chg{font-family:var(--font-mono);font-size:12px;font-weight:700;
+  padding:1px 6px;border-radius:4px;}
+.chg--pos{color:var(--pos);background:rgba(53,133,53,.12);}
+.chg--neg{color:var(--neg);background:rgba(239,66,66,.10);}
+.chg--neu{color:var(--muted);background:var(--surface);}
+.pl-pct{font-family:var(--font-mono);font-weight:700;font-size:14px;display:block;}
+.pl-abs{font-family:var(--font-mono);font-size:11px;color:var(--muted);display:block;}
+.pl-pct.pos{color:var(--pos);} .pl-pct.neg{color:var(--neg);}
 
-/* symbol / name */
-.tcard__sym  { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
-.tcard__name { font-size: 11px; color: var(--muted); white-space: nowrap;
-               overflow: hidden; text-overflow: ellipsis; }
+/* ── portfolio sub-header (price + day chg) ── */
+.port-sub{
+  display:flex;align-items:baseline;justify-content:space-between;
+  padding:6px 12px 4px;border-bottom:1px solid var(--surface);
+}
+.big-price{font-family:var(--font-mono);font-weight:700;font-size:20px;
+  letter-spacing:-.02em;}
 
-/* change pill */
-.chg { font-family: var(--font-mono); font-size: 12px; font-weight: 700;
-       padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
-.chg--pos { color: var(--pos); background: rgba(53,133,53,.12); }
-.chg--neg { color: var(--neg); background: rgba(239,66,66,.10); }
-.chg--neu { color: var(--muted); background: var(--surface); }
+/* ── body: 2-column grid ── */
+.card-body{
+  display:grid;gap:0;flex:1;
+}
+.card-body.metrics-left {grid-template-columns:5fr 7fr;}
+.card-body.chart-left   {grid-template-columns:7fr 5fr;}
 
-/* price */
-.tcard__price { font-family: var(--font-mono); font-weight: 700; font-size: 20px;
-                letter-spacing: -.02em; line-height: 1; }
+/* ── metrics column ── */
+.col-metrics{
+  padding:10px 10px 10px 12px;
+  display:flex;flex-direction:column;justify-content:space-between;
+  border-right:1px solid var(--surface);
+  gap:8px;
+}
+.card-body.chart-left .col-metrics{border-right:none;border-left:1px solid var(--surface);}
 
-/* RSI badge */
-.rsi-badge { font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-             padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
-.rsi--ob  { color: var(--neg); background: rgba(239,66,66,.10); }   /* >70 */
-.rsi--os  { color: var(--pos); background: rgba(53,133,53,.12); }   /* <30 */
-.rsi--neu { color: var(--muted); background: var(--surface); }
+.rsi-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.rsi-val{font-family:var(--font-mono);font-weight:700;font-size:13px;}
+.rsi-tag{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;
+  text-transform:uppercase;letter-spacing:.03em;}
+.rsi-ok {color:var(--pos);background:rgba(53,133,53,.12);}
+.rsi-ob {color:var(--neg);background:rgba(239,66,66,.10);}
+.rsi-os {color:var(--accent);background:rgba(0,168,232,.12);}
+.vol-tag{font-size:11px;font-weight:700;color:var(--muted);
+  display:flex;align-items:center;gap:2px;}
+.vol-tag.spike{color:var(--accent);}
 
-/* sentiment score */
-.sent-score { font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
-.sent--bull { color: var(--pos); }
-.sent--bear { color: var(--neg); }
-.sent--neu  { color: var(--muted); }
+.trend-block{display:flex;flex-direction:column;gap:4px;}
+.trend-lbl{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--muted);}
+.tbar-row{display:flex;align-items:center;gap:6px;}
+.tbar{height:5px;flex:1;border-radius:3px;background:var(--surface);overflow:hidden;}
+.tbar-fill{height:100%;border-radius:3px;}
+.tbar-fill.bull{background:var(--pos);}
+.tbar-fill.bear{background:var(--neg);}
+.tbar-fill.neu {background:var(--muted);}
+.sent-score{font-family:var(--font-mono);font-size:12px;font-weight:700;white-space:nowrap;}
+.sent-score.bull{color:var(--pos);}
+.sent-score.bear{color:var(--neg);}
+.sent-score.neu {color:var(--muted);}
 
-/* trend bar */
-.trend-bar { height: 5px; border-radius: 3px; background: var(--surface); overflow: hidden; }
-.trend-bar__fill { height: 100%; border-radius: 3px; transition: width .3s; }
-.trend-bar__fill--bull { background: var(--pos); }
-.trend-bar__fill--bear { background: var(--neg); }
-.trend-bar__fill--neu  { background: var(--muted); }
+/* ── chart column ── */
+.col-chart{
+  padding:8px 10px 6px 8px;
+  display:flex;flex-direction:column;gap:4px;
+}
+.spark-wrap{width:100%;flex:1;}
+.spark-wrap svg{display:block;width:100%;overflow:visible;}
+.ma-pcts{display:flex;gap:8px;flex-wrap:wrap;}
+.ma-pct{font-family:var(--font-mono);font-size:10px;font-weight:700;
+  display:flex;gap:2px;align-items:center;}
+.ma-pct .lbl{color:var(--muted);font-weight:400;}
+.ma-pct .val.pos{color:var(--pos);}
+.ma-pct .val.neg{color:var(--neg);}
 
-/* sparkline svg wrapper */
-.spark-wrap { width: 100%; overflow: hidden; border-radius: 4px; }
-.spark-wrap svg { display: block; }
-
-/* action row */
-.tcard__actions { display: flex; gap: 6px; padding-top: 2px; }
-.act-btn { font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .03em;
-           text-transform: uppercase; color: var(--muted);
-           background: var(--surface); border: none;
-           padding: 5px 10px; border-radius: var(--r); cursor: pointer; flex: 1; }
-.act-btn:hover { color: var(--text); background: var(--border); }
-
-/* ════════════════════
-   VARIANT D
-   Left col: data  Right col: chart
-   ════════════════════ */
-.card-d .d-body { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
-.card-d .d-left { display: flex; flex-direction: column; gap: 5px; }
-.card-d .d-right { display: flex; flex-direction: column; gap: 5px; }
-.card-d .d-header { display: flex; justify-content: space-between; align-items: flex-start; }
-.card-d .d-meta   { display: flex; align-items: center; gap: 5px; }
-.card-d .d-trendlabel { font-size: 11px; color: var(--muted); text-transform: uppercase;
-                        letter-spacing: .04em; font-weight: 700; }
-
-/* ════════════════════
-   VARIANT E
-   Full-width, breathing room
-   ════════════════════ */
-.card-e .e-header  { display: flex; justify-content: space-between; align-items: flex-start; }
-.card-e .e-subhead { display: flex; justify-content: space-between; align-items: center; }
-.card-e .e-badges  { display: flex; gap: 5px; align-items: center; }
-.card-e .e-footer  { display: flex; justify-content: space-between; align-items: center; }
-.card-e .e-sent    { display: flex; align-items: center; gap: 6px; }
+/* ── footer ── */
+.card-ft{
+  display:flex;align-items:center;gap:6px;
+  padding:8px 10px;border-top:1px solid var(--surface);
+  flex-wrap:wrap;
+}
+.act{font:inherit;font-size:11px;font-weight:700;letter-spacing:.02em;
+  text-transform:uppercase;color:var(--muted);background:var(--surface);
+  border:none;padding:5px 10px;border-radius:var(--r);cursor:pointer;flex:1;
+  min-width:44px;text-align:center;}
+.act:hover{color:var(--text);background:var(--border);}
+.act-ext{font:inherit;font-size:11px;font-weight:700;
+  color:var(--muted);background:none;border:1px solid var(--border);
+  padding:5px 10px;border-radius:var(--r);cursor:pointer;white-space:nowrap;}
+.act-ext:hover{color:var(--text);border-color:var(--text);}
+.ft-spacer{flex:1;}
 </style>
 </head>
 <body>
 
-<div class="proto-header">
-  <h1>Card Prototypes — D &amp; E</h1>
-  <button class="toggle-btn" onclick="toggleDark()">Dark Mode</button>
+<div class="proto-top">
+  <h1>Card Prototype v2</h1>
+  <button class="tbtn" onclick="toggleDark()">Dark Mode</button>
 </div>
 
-<!-- ══════════════════════════════════════════
-     VARIANT D — Split: data left / chart right
-     ══════════════════════════════════════════ -->
-<div class="variant-label">Variant D — Split column</div>
-<div class="card-grid" id="grid-d"></div>
+<!-- Variant A: metrics left / chart right -->
+<div class="sect">Option A — Metrics left · Chart right</div>
+<div class="grid" id="grid-a"></div>
 
-<!-- ══════════════════════════════════════════
-     VARIANT E — Full-width, breathing room
-     ══════════════════════════════════════════ -->
-<div class="variant-label">Variant E — Full-width stacked</div>
-<div class="card-grid" id="grid-e"></div>
+<!-- Variant B: chart left / metrics right -->
+<div class="sect">Option B — Chart left · Metrics right</div>
+<div class="grid" id="grid-b"></div>
+
+<!-- Portfolio: P/L in header, price sub-row -->
+<div class="sect">Portfolio — P/L header · Price sub-row · (Chart right)</div>
+<div class="grid" id="grid-port"></div>
 
 <script>
 /* ── mock data ── */
 const MOCK = [
   {
-    symbol: "NVDA", name: "Nvidia Corp",
-    price: 875.40, chg: +2.38,
-    rsi: 68, sent: "bullish", score: 72,
-    ma20: 840, ma50: 790, ma200: 620,
-    closes7d: [820, 835, 828, 855, 862, 869, 875],
+    symbol:"NVDA", name:"Nvidia Corp",
+    price:875.40, chg:+2.38,
+    rsi:68, rsiState:"ok", volSpike:false,
+    sent:"bullish", score:0.72,
+    ma20:840, ma50:790, ma200:620,
+    ma20pct:+4.2, ma200pct:+41.2,
+    high52w:974, low52w:462,
+    closes7d:[820,835,828,855,862,869,875],
+    /* portfolio */
+    plPct:+34.7, plAbs:+2254,
   },
   {
-    symbol: "SAP", name: "SAP SE",
-    price: 182.64, chg: -0.72,
-    rsi: 48, sent: "neutral", score: 51,
-    ma20: 180, ma50: 175, ma200: 158,
-    closes7d: [179, 181, 184, 183, 180, 182, 183],
+    symbol:"SAP", name:"SAP SE",
+    price:182.64, chg:-0.72,
+    rsi:48, rsiState:"ok", volSpike:false,
+    sent:"neutral", score:0.51,
+    ma20:180, ma50:175, ma200:158,
+    ma20pct:+1.5, ma200pct:+15.6,
+    high52w:198, low52w:139,
+    closes7d:[179,181,184,183,180,182,183],
+    plPct:+8.2, plAbs:+422,
   },
   {
-    symbol: "BNTX", name: "BioNTech SE",
-    price: 93.12, chg: -3.14,
-    rsi: 28, sent: "bearish", score: 26,
-    ma20: 105, ma50: 112, ma200: 130,
-    closes7d: [112, 108, 103, 99, 96, 94, 93],
+    symbol:"BNTX", name:"BioNTech SE",
+    price:93.12, chg:-3.14,
+    rsi:27, rsiState:"os", volSpike:true,
+    sent:"bearish", score:0.26,
+    ma20:105, ma50:112, ma200:130,
+    ma20pct:-11.3, ma200pct:-28.4,
+    high52w:145, low52w:88,
+    closes7d:[112,108,103,99,96,94,93],
+    plPct:-18.4, plAbs:-712,
   },
 ];
 
 /* ── helpers ── */
-function chgClass(v) { return v > 0 ? "chg--pos" : v < 0 ? "chg--neg" : "chg--neu"; }
-function rsiClass(v) { return v >= 70 ? "rsi--ob" : v <= 30 ? "rsi--os" : "rsi--neu"; }
-function sentClass(s) { return s === "bullish" ? "sent--bull" : s === "bearish" ? "sent--bear" : "sent--neu"; }
-function trendClass(s) { return s === "bullish" ? "bull" : s === "bearish" ? "bear" : "neu"; }
-function fmt(v, dec=2) { return v != null ? v.toLocaleString("de-DE", { minimumFractionDigits: dec, maximumFractionDigits: dec }) : "—"; }
-function fmtChg(v) { return (v >= 0 ? "+" : "") + fmt(v) + "%"; }
-function sentLabel(s) { return s === "bullish" ? "Bullish" : s === "bearish" ? "Bearish" : "Neutral"; }
+const fmt = (v, d=2) => v != null
+  ? v.toLocaleString("de-DE",{minimumFractionDigits:d,maximumFractionDigits:d}) : "—";
+const fmtChg = v => (v>=0?"+":"")+fmt(v)+"%";
+const chgCls = v => v>0?"chg--pos":v<0?"chg--neg":"chg--neu";
+const sentCls = s => s==="bullish"?"bull":s==="bearish"?"bear":"neu";
+const rsiTag = s => s==="ob"?"rsi-ob":s==="os"?"rsi-os":"rsi-ok";
+const rsiLbl = s => s==="ob"?"OB":s==="os"?"OS":"OK";
+const pctCls = v => v>=0?"pos":"neg";
 
 /* ── SVG sparkline ── */
-function sparkSVG(d, height = 52, opts = {}) {
-  const { showMA = true, fullWidth = true } = opts;
+function sparkSVG(d, h=72) {
+  const VW = 220, VH = h;
+  const chartW = 170; // leave 50px on right for labels
   const closes = d.closes7d;
-  const w = 200; // viewBox width (scales with CSS)
 
-  // range: include MAs so they're always visible within chart
-  const maVals = showMA ? [d.ma20, d.ma50, d.ma200].filter(v => v != null) : [];
-  const all = [...closes, ...maVals];
-  const pad = (Math.max(...all) - Math.min(...all)) * 0.12;
-  const minV = Math.min(...all) - pad;
-  const maxV = Math.max(...all) + pad;
-  const range = maxV - minV || 1;
+  /* Y range: include MAs AND 52w range so reference lines are always visible */
+  const all = [...closes, d.ma20, d.ma50, d.ma200, d.high52w, d.low52w].filter(Boolean);
+  const rawMin = Math.min(...all), rawMax = Math.max(...all);
+  const pad = (rawMax - rawMin) * 0.04;
+  const minV = rawMin - pad, maxV = rawMax + pad;
+  const rng = maxV - minV || 1;
 
-  const toX = i => (i / (closes.length - 1)) * w;
-  const toY = v => height - ((v - minV) / range) * (height - 4) - 2;
+  const toX = i => (i / (closes.length-1)) * chartW;
+  const toY = v => VH - ((v-minV)/rng)*VH;
 
-  const pts = closes.map((c, i) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
-  const lastX = toX(closes.length - 1);
-  const lastY = toY(closes[closes.length - 1]);
+  const pts = closes.map((c,i)=>`${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
+  const lx = toX(closes.length-1), ly = toY(closes[closes.length-1]);
+  const isPos = closes[closes.length-1] >= closes[0];
+  const lineCol = isPos ? "var(--pos)" : "var(--neg)";
 
-  const maLine = (val, dash, opacity, color = "var(--muted)") =>
-    val != null
-      ? `<line x1="0" y1="${toY(val).toFixed(1)}" x2="${w}" y2="${toY(val).toFixed(1)}"
-             stroke="${color}" stroke-width="1" stroke-dasharray="${dash}" opacity="${opacity}"/>`
-      : "";
+  /* area fill */
+  const areaPath = `M0,${toY(closes[0]).toFixed(1)} `
+    + closes.slice(1).map((c,i)=>`L${toX(i+1).toFixed(1)},${toY(c).toFixed(1)}`).join(" ")
+    + ` L${chartW},${VH} L0,${VH} Z`;
 
-  const isPos = closes[closes.length - 1] >= closes[0];
-  const lineColor = isPos ? "var(--pos)" : "var(--neg)";
+  const hline = (val, dash, col, op, label) => {
+    const y = Math.max(1, Math.min(VH-1, toY(val)));
+    return `<line x1="0" y1="${y.toFixed(1)}" x2="${chartW}" y2="${y.toFixed(1)}"
+      stroke="${col}" stroke-width="1" stroke-dasharray="${dash}" opacity="${op}"/>
+    <text x="${chartW+3}" y="${(y+3.5).toFixed(1)}" font-size="8"
+      font-family="var(--font-mono)" fill="${col}" opacity="${op}">${label}</text>`;
+  };
 
-  // subtle area fill
-  const areaClose = `${toX(closes.length-1).toFixed(1)},${height} 0,${height}`;
-  const area = `M 0,${toY(closes[0]).toFixed(1)} ` +
-    closes.slice(1).map((c, i) => `L ${toX(i+1).toFixed(1)},${toY(c).toFixed(1)}`).join(" ") +
-    ` L ${areaClose} Z`;
-
-  return `<svg viewBox="0 0 ${w} ${height}" width="100%" height="${height}" preserveAspectRatio="none">
+  return `<svg viewBox="0 0 ${VW} ${VH}" height="${VH}" style="overflow:visible">
     <defs>
-      <linearGradient id="lg${d.symbol}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.18"/>
-        <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+      <linearGradient id="g${d.symbol}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${lineCol}" stop-opacity=".15"/>
+        <stop offset="100%" stop-color="${lineCol}" stop-opacity="0"/>
       </linearGradient>
+      <clipPath id="cp${d.symbol}">
+        <rect x="0" y="0" width="${chartW}" height="${VH}"/>
+      </clipPath>
     </defs>
-    <path d="${area}" fill="url(#lg${d.symbol})"/>
-    ${showMA ? maLine(d.ma200, "3 3", "0.45") : ""}
-    ${showMA ? maLine(d.ma50,  "5 2", "0.55", "var(--accent)") : ""}
-    ${showMA ? maLine(d.ma20,  "2 2", "0.70", "var(--accent)") : ""}
-    <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.8"
-              stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="3"
-            fill="${lineColor}" stroke="var(--bg)" stroke-width="1.5"/>
+    ${hline(d.high52w, "3 3", "var(--muted)", ".55", "52H")}
+    ${hline(d.ma200,   "4 3", "var(--muted)", ".60", "MA200")}
+    ${hline(d.ma50,    "4 2", "var(--accent)", ".55", "MA50")}
+    ${hline(d.ma20,    "2 2", "var(--accent)", ".80", "MA20")}
+    <path d="${areaPath}" fill="url(#g${d.symbol})" clip-path="url(#cp${d.symbol})"/>
+    <polyline points="${pts}" fill="none" stroke="${lineCol}" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round" clip-path="url(#cp${d.symbol})"/>
+    <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="3.5"
+      fill="${lineCol}" stroke="var(--bg)" stroke-width="2"/>
+    ${hline(d.low52w,  "3 3", "var(--muted)", ".55", "52L")}
   </svg>`;
 }
 
-/* ── trend bar HTML ── */
-function trendBarHTML(d) {
-  const tc = trendClass(d.sent);
-  return `<div class="trend-bar">
-    <div class="trend-bar__fill trend-bar__fill--${tc}" style="width:${d.score}%"></div>
-  </div>`;
-}
-
-/* ══════════════════════════════════════
-   VARIANT D — split column
-   ══════════════════════════════════════ */
-function cardD(d) {
-  return `<div class="tcard card-d">
-    <div class="d-header">
-      <div>
-        <div class="tcard__sym">${d.symbol}</div>
-        <div class="tcard__name">${d.name}</div>
-      </div>
-      <span class="chg ${chgClass(d.chg)}">${fmtChg(d.chg)}</span>
+/* ── metrics column HTML ── */
+function metricsCol(d) {
+  const sc = sentCls(d.sent);
+  const sentLabels = {bullish:"Bullish", bearish:"Bearish", neutral:"Neutral"};
+  return `<div class="col-metrics">
+    <div class="rsi-row">
+      <span class="rsi-val">RSI ${d.rsi}</span>
+      <span class="rsi-tag ${rsiTag(d.rsiState)}">${rsiLbl(d.rsiState)}</span>
+      <span class="vol-tag ${d.volSpike?"spike":""}">
+        ${d.volSpike?"↑ VOL":"─ VOL"}
+      </span>
     </div>
-
-    <div class="d-body">
-      <!-- left: numbers -->
-      <div class="d-left">
-        <div class="tcard__price">${fmt(d.price)}</div>
-        <div class="d-meta">
-          <span class="rsi-badge ${rsiClass(d.rsi)}">RSI ${d.rsi}</span>
-        </div>
-        <div class="d-meta">
-          <span class="d-trendlabel">${sentLabel(d.sent)}</span>
-          <span class="sent-score ${sentClass(d.sent)}">${d.score}</span>
-        </div>
-        ${trendBarHTML(d)}
+    <div class="trend-block">
+      <div class="trend-lbl">Trend</div>
+      <div class="tbar-row">
+        <div class="tbar"><div class="tbar-fill ${sc}" style="width:${Math.round(d.score*100)}%"></div></div>
+        <span class="sent-score ${sc}">${sentLabels[d.sent]} ${d.score.toFixed(2)}</span>
       </div>
-
-      <!-- right: chart -->
-      <div class="d-right">
-        <div class="spark-wrap">${sparkSVG(d, 72)}</div>
-      </div>
-    </div>
-
-    <div class="tcard__actions">
-      <button class="act-btn">ⓘ Info</button>
-      <button class="act-btn">✎ Edit</button>
-      <button class="act-btn">⊕ Calc</button>
     </div>
   </div>`;
 }
 
-/* ══════════════════════════════════════
-   VARIANT E — full-width stacked
-   ══════════════════════════════════════ */
-function cardE(d) {
-  return `<div class="tcard card-e">
-    <div class="e-header">
-      <div>
-        <div class="tcard__sym">${d.symbol}</div>
-        <div class="tcard__name">${d.name}</div>
+/* ── chart column HTML ── */
+function chartCol(d) {
+  const mp = v => `<span class="ma-pct"><span class="lbl">${v.lbl}</span>
+    <span class="val ${pctCls(v.val)}">${v.val>=0?"+":""}${fmt(v.val)}%</span></span>`;
+  return `<div class="col-chart">
+    <div class="spark-wrap">${sparkSVG(d)}</div>
+    <div class="ma-pcts">
+      ${mp({lbl:"MA20",val:d.ma20pct})}
+      ${mp({lbl:"MA50",val:d.ma200pct})}
+    </div>
+  </div>`;
+}
+
+/* ── footer ── */
+function footer(d) {
+  const tv = d.tv ? `<button class="act-ext">TV</button>` : `<button class="act-ext">TV</button>`;
+  return `<div class="card-ft">
+    <button class="act">ⓘ Info</button>
+    <button class="act">✎ Edit</button>
+    <button class="act">⊕ Calc</button>
+    <span class="ft-spacer"></span>
+    <button class="act-ext">TV</button>
+    <button class="act-ext">ST</button>
+  </div>`;
+}
+
+/* ══════════════════
+   OPTION A — metrics left / chart right
+══════════════════ */
+function cardA(d) {
+  return `<div class="tcard">
+    <div class="card-hd">
+      <label class="card-check"><input type="checkbox"/></label>
+      <div><span class="sym">${d.symbol}</span><span class="name">${d.name}</span></div>
+      <div class="card-price-wrap">
+        <span class="price-line">${fmt(d.price)}</span>
+        <span class="chg ${chgCls(d.chg)}">${fmtChg(d.chg)}</span>
       </div>
-      <span class="chg ${chgClass(d.chg)}">${fmtChg(d.chg)}</span>
     </div>
+    <div class="card-body metrics-left">
+      ${metricsCol(d)}
+      ${chartCol(d)}
+    </div>
+    ${footer(d)}
+  </div>`;
+}
 
-    <div class="e-subhead">
-      <div class="tcard__price">${fmt(d.price)}</div>
-      <div class="e-badges">
-        <span class="rsi-badge ${rsiClass(d.rsi)}">RSI ${d.rsi}</span>
-        <span class="sent-score ${sentClass(d.sent)}">${sentLabel(d.sent)} ${d.score}</span>
+/* ══════════════════
+   OPTION B — chart left / metrics right
+══════════════════ */
+function cardB(d) {
+  return `<div class="tcard">
+    <div class="card-hd">
+      <label class="card-check"><input type="checkbox"/></label>
+      <div><span class="sym">${d.symbol}</span><span class="name">${d.name}</span></div>
+      <div class="card-price-wrap">
+        <span class="price-line">${fmt(d.price)}</span>
+        <span class="chg ${chgCls(d.chg)}">${fmtChg(d.chg)}</span>
       </div>
     </div>
-
-    <div class="spark-wrap">${sparkSVG(d, 60)}</div>
-
-    ${trendBarHTML(d)}
-
-    <div class="tcard__actions">
-      <button class="act-btn">ⓘ Info</button>
-      <button class="act-btn">✎ Edit</button>
-      <button class="act-btn">⊕ Calc</button>
+    <div class="card-body chart-left">
+      ${chartCol(d)}
+      ${metricsCol(d)}
     </div>
+    ${footer(d)}
+  </div>`;
+}
+
+/* ══════════════════
+   PORTFOLIO — P/L header + price sub-row
+══════════════════ */
+function cardPort(d) {
+  const pc = d.plPct >= 0 ? "pos" : "neg";
+  return `<div class="tcard">
+    <div class="card-hd">
+      <label class="card-check"><input type="checkbox"/></label>
+      <div><span class="sym">${d.symbol}</span><span class="name">${d.name}</span></div>
+      <div class="card-pl-wrap">
+        <span class="pl-pct ${pc}">${d.plPct>=0?"+":""}${fmt(d.plPct)}%</span>
+        <span class="pl-abs">${d.plAbs>=0?"+":""}${fmt(d.plAbs,0)} €</span>
+      </div>
+    </div>
+    <div class="port-sub">
+      <span class="big-price">${fmt(d.price)}</span>
+      <span class="chg ${chgCls(d.chg)}">${fmtChg(d.chg)}</span>
+    </div>
+    <div class="card-body metrics-left">
+      ${metricsCol(d)}
+      ${chartCol(d)}
+    </div>
+    ${footer(d)}
   </div>`;
 }
 
 /* ── render ── */
-document.getElementById("grid-d").innerHTML = MOCK.map(cardD).join("");
-document.getElementById("grid-e").innerHTML = MOCK.map(cardE).join("");
+document.getElementById("grid-a")   .innerHTML = MOCK.map(cardA).join("");
+document.getElementById("grid-b")   .innerHTML = MOCK.map(cardB).join("");
+document.getElementById("grid-port").innerHTML = MOCK.map(cardPort).join("");
 
-function toggleDark() {
-  const el = document.documentElement;
-  el.dataset.theme = el.dataset.theme === "dark" ? "" : "dark";
+function toggleDark(){
+  document.documentElement.dataset.theme =
+    document.documentElement.dataset.theme === "dark" ? "" : "dark";
 }
 </script>
 </body>
