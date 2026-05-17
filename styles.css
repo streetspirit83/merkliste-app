@@ -611,7 +611,7 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 /* ── card body: 2-column grid ── */
 .tcard__body {
-  display: grid; grid-template-columns: 3fr 2fr;
+  display: grid; grid-template-columns: 65fr 35fr;
   flex: 1;
 }
 .tcard__chart {
@@ -651,6 +651,9 @@ input, textarea, select { font: inherit; color: inherit; }
 .tcard--port .tcard__hdg-val { font-size: var(--fs-l); }
 .tcard--port .tcard__sym { font-size: var(--fs-b); }
 .trend { display: inline-flex; align-items: center; gap: 6px; }
+.trend--stacked { flex-direction: column; align-items: flex-start; gap: 3px; }
+.trend--stacked .tcard__label { display: flex; align-items: center; gap: 6px; }
+.trend__score { font-family: var(--font-mono); font-size: var(--fs-b); font-weight: var(--fw-m); margin-left: 4px; }
 .trend__bar { display: inline-flex; gap: 2px; }
 .trend__seg { width: 7px; height: 12px; background: var(--surface); border-radius: 1px; }
 .trend__seg.is-on { background: var(--accent); }

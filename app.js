@@ -1037,11 +1037,17 @@ function actionsRow(t) {
 }
 
 function priceLine(t) {
-  const ccy = t.currency_returned || t.currency || "USD";
-  return `<span class="tcard__chip">${numFmt(t.price)} <span class="dim">${ccy}</span> <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>`;
+  const sym = ccySym(t.currency_returned || t.currency || "USD");
+  return `<span class="tcard__chip">${numFmt(t.price)} <span class="dim">${sym}</span> <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>`;
 }
 function maChip(label, v) { return `<span><span class="tcard__label">${label}</span><span class="${signCls(v)}">${pctFmt(v)}</span></span>`; }
-function trendChip(t) { return `<span class="trend"><span class="tcard__label">Trend</span>${trendBar(t.sentiment_score)}<span class="trend__val ${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>`; }
+function ccySym(code) { return code === "USD" ? "$" : code === "EUR" ? "€" : code === "GBP" ? "£" : code || ""; }
+function trendChip(t) {
+  return `<span class="trend trend--stacked">
+    <span class="tcard__label">Trend<span class="trend__score ${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>
+    ${trendBar(t.sentiment_score)}
+  </span>`;
+}
 function rsiChip(t) { const r = rsiClass(t.rsi); return `<span><span class="tcard__label">RSI</span><span class="rsi__dot ${r.cls}"></span>${numFmt(t.rsi, 0)} <span class="dim">(${r.label})</span></span>`; }
 function sentChip(t) { return `<span><span class="tcard__label">Sent</span><span class="${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>`; }
 function plChip(t) {
@@ -1178,9 +1184,10 @@ function cardWatchlist(t) {
 
 function cardPortfolio(t) {
   const ccy      = t.currency_returned || t.currency || "";
+  const sym      = ccySym(ccy);
   const shares   = t.entry_shares != null ? `<span class="pill pill--sm">${numFmt(t.entry_shares, 0)}&thinsp;St.</span>` : "";
   const grpPrice = t.price != null
-    ? `<span class="tcard__hdg"><span class="tcard__hdg-val">${numFmt(t.price)}</span><span class="tcard__hdg-lbl">${ccy}</span><span class="${signCls(t.day_change_pct)} tcard__hdg-sub">(${pctFmt(t.day_change_pct)})</span></span>`
+    ? `<span class="tcard__hdg"><span class="tcard__hdg-val">${numFmt(t.price)}</span><span class="tcard__hdg-lbl">${sym}</span><span class="${signCls(t.day_change_pct)} tcard__hdg-sub">(${pctFmt(t.day_change_pct)})</span></span>`
     : "";
   const grpPl    = t.position_pl_abs != null
     ? `<span class="tcard__hdg"><span class="${signCls(t.position_pl_abs)} tcard__hdg-val">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}</span><span class="${signCls(t.performance_pct)} tcard__hdg-sub">(${pctFmt(t.performance_pct)})</span></span>`
