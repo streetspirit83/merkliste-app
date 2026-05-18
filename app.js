@@ -1062,8 +1062,8 @@ function priceLine(t) {
   const sym = ccySym(t.currency_returned || t.currency || "USD");
   return `<span class="tcard__chip">${numFmt(t.price)} <span class="dim">${sym}</span> <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>`;
 }
-function maChip(label, v) { return `<span><span class="tcard__label">${label}</span><span class="${signCls(v)}">${pctFmt(v)}</span></span>`; }
 function ccySym(code) { return code === "USD" ? "$" : code === "EUR" ? "€" : code === "GBP" ? "£" : code || ""; }
+function signedNum(v, decimals = 0, unit = "") { return v == null ? "—" : `${v >= 0 ? "+" : ""}${numFmt(v, decimals)}${unit}`; }
 function trendChip(t) {
   return `<span class="trend trend--stacked">
     <span class="tcard__label">Trend<span class="trend__score ${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>
@@ -1071,11 +1071,6 @@ function trendChip(t) {
   </span>`;
 }
 function rsiChip(t) { const r = rsiClass(t.rsi); return `<span><span class="tcard__label">RSI</span><span class="rsi__dot ${r.cls}"></span>${numFmt(t.rsi, 0)} <span class="dim">(${r.label})</span></span>`; }
-function sentChip(t) { return `<span><span class="tcard__label">Sent</span><span class="${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>`; }
-function plChip(t) {
-  if (t.performance_pct == null) return `<span><span class="tcard__label">P/L</span><span class="dim">—</span></span>`;
-  return `<span><span class="tcard__label">P/L</span><span class="${signCls(t.performance_pct)}">${pctFmt(t.performance_pct)}</span> <span class="${signCls(t.position_pl_abs)}">(${(t.position_pl_abs||0) >= 0 ? "+" : ""}${numFmt(t.position_pl_abs || 0, 0)})</span></span>`;
-}
 
 function selectChip(t) {
   const checked = Store.state.ui.selected.includes(t.id);
@@ -1138,7 +1133,6 @@ function sparkSVG(t) {
 }
 
 function maValueCol(t) {
-  const isPort = t.bucket === "portfolio";
   const row = (lbl, val, color, bold) => {
     if (val == null) return "";
     const style = [color ? `color:${color}` : "", bold ? "font-weight:700" : ""].filter(Boolean).join(";");
@@ -1170,20 +1164,7 @@ function _cardBody(t) {
   </div>`;
 }
 
-function cardNeutral(t) {
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
-    ${selectChip(t)}
-    <div class="tcard__hd">
-      <span class="tcard__sym">${t.symbol}</span>
-      ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
-      <div class="tcard__hd-right">${priceLine(t)}</div>
-    </div>
-    ${_cardBody(t)}
-    ${actionsRow(t)}
-  </article>`;
-}
-
-function cardWatchlist(t) {
+function cardDefault(t) {
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
     <div class="tcard__hd">
@@ -1254,7 +1235,7 @@ function renderCards() {
     if (window.lucide) lucide.createIcons();
     return;
   }
-  const tpl = bucket === "watchlist" ? cardWatchlist : bucket === "portfolio" ? cardPortfolio : cardNeutral;
+  const tpl = bucket === "portfolio" ? cardPortfolio : cardDefault;
   host.innerHTML = rows.map(tpl).join("");
 
   host.querySelectorAll(".btn-info").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openInfo(e.currentTarget.dataset.id); }));
@@ -2040,7 +2021,6 @@ async function runRefresh(refreshFn, list, label) {
 const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label);
 const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label);
 const refreshBucket = b => refreshList(Store.state.tickers.filter(t => t.user.bucket === b), `${b} aktualisiert`);
-const refreshAll    = () => refreshList(Store.state.tickers, "Einträge aktualisiert");
 /* Smart bulk-refresh: with selection → only selected; empty selection → full current bucket */
 function bulkRefresh() {
   const ui = Store.state.ui;
@@ -2234,8 +2214,9 @@ function applyTdLookupResult(r) {
   $("#edit-td-symbol").value = r.symbol || "";
   $("#edit-td-mic").value    = r.mic_code || "";
   /* highlight chosen result */
-  $$(".td-result").forEach(el => el.classList.remove("is-active"));
-  const active = [...$$(".td-result")].find(el => el.querySelector(".td-result__sym").textContent === r.symbol);
+  const results = $$(".td-result");
+  results.forEach(el => el.classList.remove("is-active"));
+  const active = [...results].find(el => el.querySelector(".td-result__sym").textContent === r.symbol);
   if (active) active.classList.add("is-active");
   /* status line */
   const status = $("#edit-td-status");
@@ -2429,20 +2410,18 @@ function updatePromptText() {
 function pfWaterfall(positions) {
   const sorted = [...positions].sort((a, b) => (b.position_pl_abs || 0) - (a.position_pl_abs || 0));
   const maxAbs = Math.max(...sorted.map(t => Math.abs(t.position_pl_abs || 0)), 0.01);
-  const clsP   = v => (v || 0) >= 0 ? "pos" : "neg";
   return `<div class="pf-section">
     <div class="pf-section__title">P/L je Position</div>
     <div class="pf-waterfall">
       ${sorted.map(t => {
-        const pl  = t.position_pl_abs;
-        const w   = pl != null ? Math.max(2, Math.round(Math.abs(pl) / maxAbs * 100)) : 0;
-        const cls = clsP(pl);
+        const pl = t.position_pl_abs;
+        const w  = pl != null ? Math.max(2, Math.round(Math.abs(pl) / maxAbs * 100)) : 0;
         return `<div class="pf-wf-row">
           <span class="pf-wf-sym">${t.symbol}</span>
           <div class="pf-wf-track">
-            <div class="pf-wf-bar ${cls}" style="width:${w}%"></div>
+            <div class="pf-wf-bar ${signCls(pl)}" style="width:${w}%"></div>
           </div>
-          <span class="pf-wf-val ${cls}">${pl != null ? (pl >= 0 ? "+" : "") + numFmt(pl, 0) + "€" : "—"}</span>
+          <span class="pf-wf-val ${signCls(pl)}">${signedNum(pl, 0, "€")}</span>
         </div>`;
       }).join("")}
     </div>
@@ -2499,7 +2478,7 @@ function pfStrategySplit(allPortfolio) {
   const STRATS  = ["long", "swing", "breakout"];
   const LABELS  = { long: "Long", swing: "Swing", breakout: "Contrarian" };
   const COLORS  = { long: "#3A82C4", swing: "#6EC6E6", breakout: "#9B6DFF" };
-  const targets = { ...({ long: 50, swing: 30, breakout: 20 }), ...(Store.state.config.strategy_targets || {}) };
+  const targets = { long: 50, swing: 30, breakout: 20, ...Store.state.config.strategy_targets };
   const values  = { long: 0, swing: 0, breakout: 0 };
   allPortfolio.forEach(t => { if (t.priority in values) values[t.priority] += t.position_value || 0; });
   const totalVal = Object.values(values).reduce((s, v) => s + v, 0) || 1;
@@ -2571,10 +2550,9 @@ function renderPortfolioPerf() {
   }
 
   const totalValue = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
-  const totalCost  = positions.reduce((s, t) => s + ((t._raw?.user?.entry_price_manual || 0) * (t._raw?.user?.entry_shares || 0)), 0);
+  const totalCost  = positions.reduce((s, t) => s + ((t.entry_price_manual || 0) * (t.entry_shares || 0)), 0);
   const totalPlAbs = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
   const totalPlPct = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
-  const clsP = v => (v || 0) >= 0 ? "pos" : "neg";
 
   const W = 340, H = 160;
   const treemap = positions.length ? buildTreemap(positions, W, H) : [];
@@ -2587,7 +2565,7 @@ function renderPortfolioPerf() {
       </div>
       <div class="pf-summary__kpi">
         <span class="pf-summary__label">P/L gesamt</span>
-        <span class="pf-summary__val ${clsP(totalPlAbs)}">${totalPlAbs >= 0 ? "+" : ""}${numFmt(totalPlAbs, 0)} (${totalPlPct != null ? (totalPlPct >= 0 ? "+" : "") + numFmt(totalPlPct, 2) + "%" : "—"})</span>
+        <span class="pf-summary__val ${signCls(totalPlAbs)}">${signedNum(totalPlAbs, 0)} (${totalPlPct != null ? signedNum(totalPlPct, 2, "%") : "—"})</span>
       </div>
     </div>
     ${treemap.length ? `<div class="pf-treemap-wrap">
