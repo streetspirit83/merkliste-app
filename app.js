@@ -759,7 +759,7 @@ function flat(t) {
     symbol: s.symbol, name: s.name, exchange: s.exchange,
     asset_type: s.asset_type, sector: s.sector, currency: s.currency,
     tradingview_url: s.tradingview_url || null,
-    stocktwits_url: s.stocktwits_url || null,
+    stocktwits_url: s.stocktwits_url || `https://stocktwits.com/symbol/${s.symbol}`,
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
     entry_price_manual: u.entry_price_manual, entry_shares: u.entry_shares,
     alerts: u.alerts || [],
@@ -1440,7 +1440,7 @@ function openEdit(id) {
   $("#edit-td-mic").value    = t.stamm.twelvedata_mic_code || "";
   $("#edit-yahoo-symbol").value = t.stamm.yahoo_symbol || "";
   $("#edit-tv-url").value = t.stamm.tradingview_url || "";
-  $("#edit-st-url").value = t.stamm.stocktwits_url || "";
+  $("#edit-st-url").value = t.stamm.stocktwits_url || `https://stocktwits.com/symbol/${t.stamm.symbol}`;
   /* show guessed Yahoo-symbol as placeholder for unconfigured tickers */
   $("#edit-yahoo-symbol").placeholder = `Vorgeschlagen: ${API._guessYahooSymbol(t) || "—"}`;
   /* reset lookup UI */
