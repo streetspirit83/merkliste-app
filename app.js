@@ -1157,17 +1157,12 @@ function maValueCol(t) {
 }
 
 function _cardBody(t) {
-  const sparkPcts = `<div class="tcard__spark-pcts">
-    ${maChip("MA20", t.ma20_delta_pct)}
-    ${maChip("MA200", t.ma200_delta_pct)}
-  </div>`;
   return `<div class="tcard__body">
     <div class="tcard__chart">
       <div class="tcard__chart-row">
         <div class="tcard__spark">${sparkSVG(t)}</div>
         ${maValueCol(t)}
       </div>
-      ${sparkPcts}
     </div>
     <div class="tcard__metrics">
       ${[rsiChip(t), volChip(t), trendChip(t)].filter(Boolean).map(h => `<div>${h}</div>`).join("")}
