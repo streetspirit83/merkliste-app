@@ -2427,22 +2427,22 @@ function updatePromptText() {
 }
 
 function pfWaterfall(positions) {
-  const sorted  = [...positions].sort((a, b) => (b.performance_pct || 0) - (a.performance_pct || 0));
-  const maxAbs  = Math.max(...sorted.map(t => Math.abs(t.performance_pct || 0)), 0.1);
-  const clsP    = v => (v || 0) >= 0 ? "pos" : "neg";
+  const sorted = [...positions].sort((a, b) => (b.position_pl_abs || 0) - (a.position_pl_abs || 0));
+  const maxAbs = Math.max(...sorted.map(t => Math.abs(t.position_pl_abs || 0)), 0.01);
+  const clsP   = v => (v || 0) >= 0 ? "pos" : "neg";
   return `<div class="pf-section">
     <div class="pf-section__title">P/L je Position</div>
     <div class="pf-waterfall">
       ${sorted.map(t => {
-        const pct = t.performance_pct;
-        const w   = pct != null ? Math.max(2, Math.round(Math.abs(pct) / maxAbs * 100)) : 0;
-        const cls = clsP(pct);
+        const pl  = t.position_pl_abs;
+        const w   = pl != null ? Math.max(2, Math.round(Math.abs(pl) / maxAbs * 100)) : 0;
+        const cls = clsP(pl);
         return `<div class="pf-wf-row">
           <span class="pf-wf-sym">${t.symbol}</span>
           <div class="pf-wf-track">
             <div class="pf-wf-bar ${cls}" style="width:${w}%"></div>
           </div>
-          <span class="pf-wf-val ${cls}">${pct != null ? (pct >= 0 ? "+" : "") + numFmt(pct, 1) + "%" : "—"}</span>
+          <span class="pf-wf-val ${cls}">${pl != null ? (pl >= 0 ? "+" : "") + numFmt(pl, 0) + "€" : "—"}</span>
         </div>`;
       }).join("")}
     </div>
@@ -2500,9 +2500,9 @@ function pfStrategySplit(allPortfolio) {
   const LABELS  = { long: "Long", swing: "Swing", breakout: "Contrarian" };
   const COLORS  = { long: "#3A82C4", swing: "#6EC6E6", breakout: "#9B6DFF" };
   const targets = { ...({ long: 50, swing: 30, breakout: 20 }), ...(Store.state.config.strategy_targets || {}) };
-  const total   = allPortfolio.length || 1;
-  const counts  = { long: 0, swing: 0, breakout: 0 };
-  allPortfolio.forEach(t => { if (t.priority in counts) counts[t.priority]++; });
+  const values  = { long: 0, swing: 0, breakout: 0 };
+  allPortfolio.forEach(t => { if (t.priority in values) values[t.priority] += t.position_value || 0; });
+  const totalVal = Object.values(values).reduce((s, v) => s + v, 0) || 1;
 
   // donut
   const CX = 56, CY = 56, RO = 46, RI = 26;
@@ -2520,15 +2520,15 @@ function pfStrategySplit(allPortfolio) {
     angle = end;
     return d;
   };
-  const paths = STRATS.map(s => ({ s, d: arc(counts[s] / total), color: COLORS[s] }));
+  const paths = STRATS.map(s => ({ s, d: arc(values[s] / totalVal), color: COLORS[s] }));
   const donut = `<svg viewBox="0 0 112 112" width="112" height="112" style="flex-shrink:0">
     ${paths.map(p => p.d ? `<path d="${p.d}" fill="${p.color}" opacity=".85"/>` : "").join("")}
-    <text x="${CX}" y="${CY - 5}" text-anchor="middle" font-size="13" font-weight="700" font-family="DM Mono,monospace" fill="var(--text)">${allPortfolio.length}</text>
-    <text x="${CX}" y="${CY + 11}" text-anchor="middle" font-size="9" font-family="DM Sans,sans-serif" fill="var(--muted)">Positionen</text>
+    <text x="${CX}" y="${CY - 5}" text-anchor="middle" font-size="11" font-weight="700" font-family="DM Mono,monospace" fill="var(--text)">${numFmt(totalVal, 0)}</text>
+    <text x="${CX}" y="${CY + 10}" text-anchor="middle" font-size="8" font-family="DM Sans,sans-serif" fill="var(--muted)">€ investiert</text>
   </svg>`;
 
   const rows = STRATS.map(s => {
-    const actual  = Math.round((counts[s] / total) * 100);
+    const actual  = Math.round((values[s] / totalVal) * 100);
     const tgt     = targets[s] || 0;
     const diff    = actual - tgt;
     const diffCls = diff > 5 ? "pos" : diff < -5 ? "neg" : "dim";
@@ -2594,26 +2594,17 @@ function renderPortfolioPerf() {
       <svg class="pf-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
         ${treemap.map(r => {
           const perf = r.performance_pct;
+          const val  = r.position_value;
           const fill = perf == null ? "var(--border)" : perf >= 0 ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})` : `rgba(239,66,66,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})`;
           const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
           return `<g>
             <rect x="${r.x1+1}" y="${r.y1+1}" width="${fw-2}" height="${fh-2}" rx="4" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
             ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
-            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${perf != null ? (perf>=0?"+":"")+numFmt(perf,1)+"%" : "—"}</text>` : ""}
+            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${val != null ? numFmt(val, 0) + "€" : "—"}</text>` : ""}
           </g>`;
         }).join("")}
       </svg>
     </div>` : ""}
-    <div class="pf-positions">
-      ${positions.sort((a,b) => (b.position_value||0)-(a.position_value||0)).map(t => `
-        <div class="pf-pos">
-          <span class="pf-pos__sym">${t.symbol}</span>
-          <span class="pf-pos__name dim">${t.name || ""}</span>
-          <span class="pf-pos__val">${numFmt(t.position_value)}</span>
-          <span class="pf-pos__pl ${clsP(t.performance_pct || 0)}">${t.performance_pct != null ? (t.performance_pct>=0?"+":"")+numFmt(t.performance_pct,2)+"%" : "—"}</span>
-          <span class="pf-pos__plabs ${clsP(t.position_pl_abs || 0)}">${t.position_pl_abs != null ? (t.position_pl_abs>=0?"+":"")+numFmt(t.position_pl_abs,0) : "—"}</span>
-        </div>`).join("")}
-    </div>
     ${positions.length ? pfWaterfall(positions) : ""}
     ${positions.length ? pfScatterMatrix(positions) : ""}
     ${pfStrategySplit(allPortfolio)}`;
