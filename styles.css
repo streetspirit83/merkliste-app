@@ -602,13 +602,20 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 /* ── portfolio price sub-row ── */
 .tcard__price-sub {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 4px 12px 0 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--surface);
+  font-family: var(--font-mono); font-size: var(--fs-l);
 }
 .tcard.has-select .tcard__price-sub { padding-left: 38px; }
-.tcard__big-price {
-  font-family: var(--font-mono); font-weight: var(--fw-h); font-size: 20px;
-}
+.tcard__sub-left  { display: flex; align-items: center; gap: 5px; }
+.tcard__sub-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.tcard__sub-lbl   { font-family: var(--font-sans); font-size: var(--fs-l); color: var(--muted); }
+.tcard__sub-inv   { display: inline-flex; align-items: center; gap: 2px; font-weight: var(--fw-m); }
+.tcard__sub-delta { font-weight: var(--fw-m); }
+.tcard__sub-ep    { display: inline-flex; align-items: center; gap: 4px; }
+.tcard__ep-lbl    { color: #9B6DFF; }
+.tcard__ep-val    { color: #9B6DFF; font-weight: var(--fw-h); }
 /* ── card body: 2-column grid ── */
 .tcard__body {
   display: grid; grid-template-columns: 65fr 35fr;
@@ -647,9 +654,6 @@ input, textarea, select { font: inherit; color: inherit; }
 .tcard__hdg-lbl { font-family: var(--font-sans); font-size: var(--fs-l); color: var(--muted); }
 .tcard__hdg-sub { font-family: var(--font-mono); font-size: var(--fs-l); }
 .tcard__hd-sep { color: var(--border); font-size: var(--fs-l); margin: 0 4px; }
-.tcard--port .tcard__hd { gap: 6px; font-size: var(--fs-l); }
-.tcard--port .tcard__hdg-val { font-size: var(--fs-l); }
-.tcard--port .tcard__sym { font-size: var(--fs-b); }
 .trend { display: inline-flex; align-items: center; gap: 6px; }
 .trend--stacked { flex-direction: column; align-items: flex-start; gap: 3px; }
 .trend--stacked .tcard__label { display: flex; align-items: center; gap: 6px; }

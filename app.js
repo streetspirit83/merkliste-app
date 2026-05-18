@@ -1153,7 +1153,6 @@ function maValueCol(t) {
     ${row("MA200", t.ma200, "#1B4E8C")}
     ${row("52H",   t.high_52w,  null)}
     ${row("52T",   t.low_52w,   null)}
-    ${isPort ? row("EP", t.entry_price_manual, "#9B6DFF", true) : ""}
   </div>`;
 }
 
@@ -1171,9 +1170,7 @@ function _cardBody(t) {
       ${sparkPcts}
     </div>
     <div class="tcard__metrics">
-      <div>${rsiChip(t)}</div>
-      <div>${volChip(t)}</div>
-      <div>${trendChip(t)}</div>
+      ${[rsiChip(t), volChip(t), trendChip(t)].filter(Boolean).map(h => `<div>${h}</div>`).join("")}
     </div>
   </div>`;
 }
@@ -1205,26 +1202,38 @@ function cardWatchlist(t) {
 }
 
 function cardPortfolio(t) {
-  const ccy      = t.currency_returned || t.currency || "";
-  const sym      = ccySym(ccy);
   const shares   = t.entry_shares != null ? `<span class="pill pill--sm">${numFmt(t.entry_shares, 0)}&thinsp;St.</span>` : "";
-  const grpPrice = t.price != null
-    ? `<span class="tcard__hdg"><span class="tcard__hdg-val">${numFmt(t.price)}</span><span class="tcard__hdg-lbl">${sym}</span><span class="${signCls(t.day_change_pct)} tcard__hdg-sub">(${pctFmt(t.day_change_pct)})</span></span>`
-    : "";
-  const grpPl    = t.position_pl_abs != null
-    ? `<span class="tcard__hdg"><span class="${signCls(t.position_pl_abs)} tcard__hdg-val">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}</span><span class="${signCls(t.performance_pct)} tcard__hdg-sub">(${pctFmt(t.performance_pct)})</span></span>`
-    : "";
-  const sep      = `<span class="tcard__hd-sep">|</span>`;
-  const rightGroups = [grpPrice, grpPl].filter(Boolean).join(sep);
-  return `<article class="tcard has-select tcard--port ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
+  const invested = (t.entry_price_manual != null && t.entry_shares != null)
+    ? t.entry_price_manual * t.entry_shares : null;
+
+  // sub-row left: invested € | abs delta €
+  const subLeft = invested != null ? `
+    <span class="tcard__sub-inv"><span class="tcard__sub-lbl">€</span>${numFmt(invested, 0)}</span>
+    ${t.position_pl_abs != null ? `<span class="tcard__hd-sep">|</span><span class="${signCls(t.position_pl_abs)} tcard__sub-delta">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}€</span>` : ""}
+  ` : "";
+
+  // sub-row right: EP (purple) + P/L%
+  const subRight = t.entry_price_manual != null ? `
+    <span class="tcard__sub-ep">
+      <span class="tcard__sub-lbl tcard__ep-lbl">EP</span>
+      <span class="tcard__ep-val">${numFmt(t.entry_price_manual)}€</span>
+      <span class="${signCls(t.performance_pct)}">${pctFmt(t.performance_pct)}</span>
+    </span>
+  ` : "";
+
+  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
     ${selectChip(t)}
     ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
     <div class="tcard__hd">
       <span class="tcard__sym">${t.symbol}</span>
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
       ${shares}
-      <div class="tcard__hd-right">${rightGroups}</div>
+      <div class="tcard__hd-right">${priceLine(t)}</div>
     </div>
+    ${subLeft || subRight ? `<div class="tcard__price-sub">
+      <span class="tcard__sub-left">${subLeft}</span>
+      <span class="tcard__sub-right">${subRight}</span>
+    </div>` : ""}
     ${_cardBody(t)}
     ${actionsRow(t)}
   </article>`;
