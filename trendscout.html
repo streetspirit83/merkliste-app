@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trend-Scout · Prompt-Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inconsolata:wght@400;500;600&family=Work+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+:root {
+  --paper:       #f5f0e6;
+  --paper-deep:  #ede4d3;
+  --paper-warm:  #f9f5ec;
+  --ink-900:     #2a241d;
+  --ink-700:     #5c4e3e;
+  --ink-500:     #8a7a64;
+  --ink-300:     #bbaf9a;
+  --accent:      #8b3a2f;
+  --accent-soft: #d8b7a8;
+  --accent-bg:   rgba(139, 58, 47, 0.06);
+  --gain:        #4a7c59;
+  --loss:        #a14545;
+  --warn:        #a87a2a;
+  --warn-soft:   #f0e4c9;
+  --long:        #3a6b8b;
+  --long-soft:   #c5dce8;
+  --long-bg:     rgba(58, 107, 139, 0.07);
+  --contra:      #6b3a8b;
+  --contra-soft: #d8c5e8;
+  --contra-bg:   rgba(107, 58, 139, 0.07);
+  --line:        rgba(42, 36, 29, 0.12);
+  --line-strong: rgba(42, 36, 29, 0.22);
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --font-body:    'Work Sans', system-ui, -apple-system, sans-serif;
+  --font-mono:    'Inconsolata', 'SF Mono', Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--paper);
+  color: var(--ink-900);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(139,58,47,0.04), transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(139,58,47,0.03), transparent 45%);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(50,40,30,0.2); border-radius: 10px; }
+
+@keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeIn  { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* MASTHEAD */
+.masthead { border-bottom: 1px solid var(--line); background: linear-gradient(180deg, var(--paper-deep) 0%, var(--paper) 100%); }
+.masthead__inner { max-width: 1200px; margin: 0 auto; padding: 1.5rem 2rem 1rem; }
+.brand { display: flex; align-items: center; gap: 0.75rem; }
+.brand__mark { font-size: 1.75rem; color: var(--accent); font-family: var(--font-display); line-height: 1; }
+.brand__title { font-family: var(--font-display); font-weight: 500; font-size: 2.2rem; margin: 0; letter-spacing: -0.02em; color: var(--ink-900); font-variation-settings: 'opsz' 144; }
+.brand__sub { font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--ink-500); margin: 0.1rem 0 0; }
+
+/* WORKFLOW */
+.workflow { border-bottom: 1px solid var(--line); background: var(--paper-warm); }
+.workflow__inner { max-width: 1200px; margin: 0 auto; padding: 0.85rem 2rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.workflow__step { display: inline-flex; align-items: center; gap: 0.45rem; }
+.workflow__num { background: var(--accent); color: var(--paper); width: 22px; height: 22px; border-radius: 99px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; }
+.workflow__label { font-size: 0.85rem; color: var(--ink-700); font-weight: 500; }
+.workflow__arrow { color: var(--ink-300); }
+
+/* MAIN */
+.main { max-width: 1200px; margin: 0 auto; padding: 2rem; animation: fadeIn 0.3s ease; }
+
+/* SECTIONS */
+.section { margin-bottom: 2.5rem; padding-bottom: 2rem; border-bottom: 1px solid var(--line); }
+.section:last-of-type { border-bottom: none; }
+.section__head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap; }
+.kicker { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.18em; margin: 0 0 0.25rem; font-weight: 500; }
+.section__title { font-family: var(--font-display); font-weight: 500; font-size: 1.85rem; line-height: 1.1; margin: 0; letter-spacing: -0.015em; color: var(--ink-900); font-variation-settings: 'opsz' 144; }
+.section__title em { font-style: italic; font-weight: 400; color: var(--ink-500); font-size: 0.65em; }
+.section__actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+.block-label { font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-700); margin: 0 0 0.6rem; font-weight: 500; }
+.block-note { color: var(--ink-500); text-transform: none; letter-spacing: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 2rem; }
+
+/* CHIPS */
+.chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.chip { padding: 0.4rem 0.75rem; border: 1px solid var(--line); background: var(--paper); border-radius: 3px; font-family: var(--font-body); font-size: 0.8rem; cursor: pointer; color: var(--ink-700); transition: all 0.1s; }
+.chip:hover { border-color: var(--line-strong); }
+.chip--active { background: var(--ink-900); color: var(--paper); border-color: var(--ink-900); }
+
+.check-row { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.85rem; cursor: pointer; color: var(--ink-700); line-height: 1.4; }
+.check-row input { accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
+
+/* WEIGHTS */
+.weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 0.5rem 2rem; }
+.weight-row { display: flex; justify-content: space-between; align-items: center; padding: 0.65rem 0; border-bottom: 1px dotted var(--line); gap: 1rem; }
+.weight-row__label { font-family: var(--font-display); font-size: 1rem; font-weight: 500; color: var(--ink-900); }
+.weight-row__desc { font-family: var(--font-body); font-size: 0.75rem; color: var(--ink-500); margin-top: 0.1rem; }
+.weight-row__ctrl { display: flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.weight-btn { width: 32px; height: 32px; background: var(--paper); border: none; border-right: 1px solid var(--line); font-family: var(--font-mono); font-size: 0.85rem; cursor: pointer; color: var(--ink-700); }
+.weight-btn:last-child { border-right: none; }
+.weight-btn--active { background: var(--accent); color: var(--paper); }
+
+/* SEG */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; width: fit-content; }
+.seg__btn { background: var(--paper); border: none; border-right: 1px solid var(--line); padding: 0.5rem 1rem; font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-700); cursor: pointer; min-width: 50px; }
+.seg__btn:last-child { border-right: none; }
+.seg__btn--active { background: var(--ink-900); color: var(--paper); }
+
+/* PRESETS */
+.presets { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.preset { position: relative; display: inline-flex; }
+.preset__btn { background: var(--paper-deep); border: 1px solid var(--line); padding: 0.65rem 1rem; border-radius: 4px; cursor: pointer; text-align: left; font-family: var(--font-body); display: flex; flex-direction: column; gap: 0.15rem; min-width: 200px; color: var(--ink-900); }
+.preset__btn:hover { border-color: var(--line-strong); }
+.preset__name { font-family: var(--font-display); font-style: italic; font-size: 1rem; font-weight: 500; }
+.preset__meta { font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-500); }
+.preset__badge { position: absolute; top: 4px; right: 4px; background: var(--accent); color: var(--paper); padding: 0.1rem 0.35rem; border-radius: 2px; font-size: 0.55rem; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em; }
+.preset__badge--long    { background: var(--long); }
+.preset__badge--contra  { background: var(--contra); }
+.preset__del { position: absolute; top: 4px; right: 4px; background: var(--paper); border: 1px solid var(--line); border-radius: 99px; width: 22px; height: 22px; font-size: 0.85rem; cursor: pointer; color: var(--ink-500); display: flex; align-items: center; justify-content: center; }
+.preset__del:hover { color: var(--loss); border-color: var(--loss); }
+.preset__add { background: transparent; border: 1px dashed var(--line-strong); padding: 0.65rem 1rem; border-radius: 4px; font-family: var(--font-body); font-size: 0.8rem; color: var(--ink-500); cursor: pointer; min-width: 200px; }
+.preset__add:hover { border-color: var(--accent); color: var(--accent); }
+
+/* INLINE FORM */
+.inline-form { margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.inline-form input { flex: 1; min-width: 200px; background: var(--paper-deep); border: 1px solid var(--line); border-radius: 3px; padding: 0.55rem 0.8rem; font-family: var(--font-body); font-size: 0.85rem; color: var(--ink-900); outline: none; }
+.inline-form input:focus { border-color: var(--accent); }
+
+/* INPUTS */
+textarea, input[type=text] {
+  width: 100%; background: var(--paper-deep); border: 1px solid var(--line); border-radius: 3px;
+  padding: 0.7rem 0.9rem; font-family: var(--font-body); font-size: 0.85rem; color: var(--ink-900); outline: none; resize: vertical;
+}
+textarea:focus, input[type=text]:focus { border-color: var(--accent); }
+
+/* PROMPT OUTPUT */
+#prompt-output { background: var(--paper-deep); border: 1px solid var(--line); border-radius: 4px; padding: 1.2rem 1.4rem; font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.55; color: var(--ink-900); min-height: 280px; max-height: 520px; resize: vertical; outline: none; cursor: text; }
+#prompt-output:focus { border-color: var(--accent); }
+#prompt-output.collapsed { min-height: 60px; max-height: 60px; }
+
+.handoff { margin-top: 1rem; padding: 0.75rem 1rem; background: var(--accent-bg); border: 1px solid var(--accent-soft); border-radius: 3px; font-size: 0.85rem; color: var(--ink-700); display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.handoff__icon { color: var(--accent); font-size: 1rem; }
+
+.warn-box { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn); padding: 0.75rem 1rem; border-radius: 3px; font-size: 0.85rem; margin-bottom: 1rem; }
+
+/* BUTTONS */
+.btn { background: var(--ink-900); color: var(--paper); border: none; padding: 0.55rem 1rem; font-family: var(--font-body); font-size: 0.8rem; font-weight: 500; cursor: pointer; border-radius: 3px; display: inline-flex; align-items: center; gap: 0.35rem; transition: all 0.15s; }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.btn--ghost { background: transparent; color: var(--ink-700); border: 1px solid var(--line-strong); }
+.btn--ghost:hover { background: var(--paper-deep); color: var(--ink-900); }
+
+/* FOOTER */
+.footer { border-top: 1px solid var(--line); padding: 1rem 2rem; font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-500); text-transform: uppercase; letter-spacing: 0.1em; display: flex; justify-content: space-between; max-width: 1200px; margin: 0 auto; }
+
+/* TOASTS */
+.toasts { position: fixed; bottom: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 200; max-width: 360px; }
+.toast { background: var(--ink-900); color: var(--paper); padding: 0.7rem 1.1rem; border-radius: 3px; font-size: 0.85rem; border-left: 3px solid var(--accent); box-shadow: 0 8px 24px rgba(0,0,0,0.15); animation: slideIn 0.25s ease; }
+.toast--ok  { border-left-color: var(--gain); }
+.toast--err { border-left-color: var(--loss); }
+
+/* MODE TABS */
+.section--modes { background: var(--paper-warm); border-radius: 4px; padding: 1.4rem 1.6rem; margin-bottom: 2rem; }
+.mode-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; margin-top: 0.5rem; }
+.mode-tab { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 0.85rem 1rem; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 0.25rem; transition: border-color 0.15s, background 0.15s; }
+.mode-tab:hover { border-color: var(--accent); }
+.mode-tab--active { background: var(--ink-900); color: var(--paper); border-color: var(--ink-900); }
+.mode-tab--active .mode-tab__sub { color: rgba(255,255,255,0.65); }
+.mode-tab--long.mode-tab--active  { background: var(--long);   border-color: var(--long); }
+.mode-tab--contra.mode-tab--active { background: var(--contra); border-color: var(--contra); }
+.mode-tab__icon  { font-size: 1.4rem; line-height: 1; }
+.mode-tab__title { font-family: var(--font-display); font-weight: 500; font-size: 1.05rem; }
+.mode-tab__sub   { font-size: 0.75rem; color: var(--ink-500); line-height: 1.35; }
+
+/* STRATEGY BADGE */
+.strategy-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 2px;
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+}
+.strategy-badge--swing   { background: var(--accent-bg);  color: var(--accent); border: 1px solid var(--accent-soft); }
+.strategy-badge--long    { background: var(--long-bg);    color: var(--long);   border: 1px solid var(--long-soft); }
+.strategy-badge--contra  { background: var(--contra-bg);  color: var(--contra); border: 1px solid var(--contra-soft); }
+
+/* THEME GRID */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.8rem; margin-top: 0.5rem; }
+.theme-card { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 0; cursor: pointer; text-align: left; display: flex; flex-direction: column; transition: border-color 0.15s, transform 0.15s; font-family: inherit; }
+.theme-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.theme-card--active { border-color: var(--accent); background: var(--accent-bg); }
+.theme-card__head { display: flex; justify-content: space-between; align-items: center; padding: 0.85rem 1rem; border-bottom: 1px solid var(--line); }
+.theme-card__title { font-family: var(--font-display); font-weight: 500; font-size: 1.05rem; }
+.theme-card__chevron { color: var(--ink-500); font-size: 0.85rem; }
+.theme-card__body { padding: 0.5rem 1rem 0.85rem; }
+.theme-card__intro { font-size: 0.78rem; color: var(--ink-700); margin-bottom: 0.5rem; line-height: 1.4; }
+.theme-card__subs { font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-500); line-height: 1.5; }
+.theme-card__subs li { list-style: '· '; padding-left: 0.3rem; margin-left: 0.6rem; }
+
+@media (max-width: 900px) { .mode-tabs { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 720px) {
+  .masthead__inner { padding: 1rem; }
+  .workflow__inner { padding: 0.7rem 1rem; }
+  .main { padding: 1rem; }
+  .footer { padding: 0.85rem 1rem; }
+  .brand__title { font-size: 1.6rem; }
+  .section__title { font-size: 1.5rem; }
+  .grid2, .grid3 { grid-template-columns: 1fr; gap: 1.5rem; }
+  .weights { grid-template-columns: 1fr; }
+  .mode-tabs { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 480px) {
+  .mode-tabs { grid-template-columns: 1fr; }
+  .preset__btn, .preset__add { min-width: 160px; }
+}
+  </style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead__inner">
+    <div class="brand">
+      <span class="brand__mark">❋</span>
+      <div>
+        <h1 class="brand__title">Trend-Scout</h1>
+        <p class="brand__sub">Prompt-Generator · Swing · Long · Contrarian · ETF</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="workflow">
+  <div class="workflow__inner">
+    <div class="workflow__step"><span class="workflow__num">1</span><span class="workflow__label">Strategie & Filter</span></div>
+    <div class="workflow__arrow">→</div>
+    <div class="workflow__step"><span class="workflow__num">2</span><span class="workflow__label">Prompt kopieren</span></div>
+    <div class="workflow__arrow">→</div>
+    <div class="workflow__step"><span class="workflow__num">3</span><span class="workflow__label">In Claude-Chat einfügen</span></div>
+    <div class="workflow__arrow">→</div>
+    <div class="workflow__step"><span class="workflow__num">4</span><span class="workflow__label">JSON in Merkliste importieren</span></div>
+  </div>
+</section>
+
+<main class="main">
+
+  <!-- MODE SWITCHER -->
+  <section class="section section--modes">
+    <header class="section__head">
+      <div>
+        <p class="kicker">Strategie & Modus</p>
+        <h2 class="section__title">Was willst du recherchieren?</h2>
+      </div>
+    </header>
+    <div class="mode-tabs" id="mode-tabs">
+      <button class="mode-tab mode-tab--active" data-mode="swing">
+        <span class="mode-tab__icon">⤴</span>
+        <span class="mode-tab__title">Swing-Scan</span>
+        <span class="mode-tab__sub">kurzfristige Trend-Kandidaten · 1–8 Wochen</span>
+      </button>
+      <button class="mode-tab mode-tab--long" data-mode="long">
+        <span class="mode-tab__icon">◈</span>
+        <span class="mode-tab__title">Long / Position</span>
+        <span class="mode-tab__sub">Qualitätsinvestments · 6–24 Monate</span>
+      </button>
+      <button class="mode-tab mode-tab--contra" data-mode="contrarian">
+        <span class="mode-tab__icon">⟳</span>
+        <span class="mode-tab__title">Contrarian</span>
+        <span class="mode-tab__sub">fundamental intakt · übermässig abgestraft</span>
+      </button>
+      <button class="mode-tab" data-mode="etf">
+        <span class="mode-tab__icon">⊞</span>
+        <span class="mode-tab__title">ETF-Scan</span>
+        <span class="mode-tab__sub">Themen-, Sektor-, Faktor-ETFs suchen</span>
+      </button>
+      <button class="mode-tab" data-mode="theme">
+        <span class="mode-tab__icon">⌬</span>
+        <span class="mode-tab__title">Future-Themen</span>
+        <span class="mode-tab__sub">Solar, AI, Biotech, Defense, Robotik</span>
+      </button>
+      <button class="mode-tab" data-mode="hot">
+        <span class="mode-tab__icon">⚡</span>
+        <span class="mode-tab__title">Hot Specs</span>
+        <span class="mode-tab__sub">heiß diskutierte hochspekulative Small-Caps</span>
+      </button>
+      <button class="mode-tab" data-mode="symbol">
+        <span class="mode-tab__icon">⌕</span>
+        <span class="mode-tab__title">Einzel-Recherche</span>
+        <span class="mode-tab__sub">Tiefenrecherche für einen bestimmten Wert</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- ===== SWING ===== -->
+  <div data-mode-content="swing">
+    <section class="section">
+      <header class="section__head">
+        <div>
+          <p class="kicker">Schritt 01 · Swing</p>
+          <h2 class="section__title">Preset wählen <em>oder frei konfigurieren</em></h2>
+        </div>
+      </header>
+      <span class="strategy-badge strategy-badge--swing">Swing · 1–8 Wochen · Trend-Momentum</span>
+      <div class="presets" id="swing-presets"></div>
+      <div class="inline-form" id="swing-save-form" hidden>
+        <input type="text" id="swing-preset-name" placeholder="Name des Presets" />
+        <button class="btn" id="swing-btn-save">Speichern</button>
+        <button class="btn btn--ghost" id="swing-btn-cancel">Abbrechen</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 02 · Universum</p>
+        <h2 class="section__title">Wo wird gesucht?</h2>
+      </header>
+      <div class="grid3">
+        <div>
+          <p class="block-label">Märkte</p>
+          <div class="chips" id="swing-markets"></div>
+        </div>
+        <div>
+          <p class="block-label">Market Cap</p>
+          <div class="chips" id="swing-marketcap"></div>
+        </div>
+        <div>
+          <p class="block-label">Liquidität</p>
+          <label class="check-row">
+            <input type="checkbox" id="swing-liquidity" />
+            <span>Nur liquide Werte (keine Pink Sheets, MC > 500 Mio.)</span>
+          </label>
+        </div>
+      </div>
+      <div style="margin-top:1.5rem">
+        <p class="block-label">Sektoren <span class="block-note">· leer = alle</span></p>
+        <div class="chips" id="swing-sectors"></div>
+      </div>
+      <div style="margin-top:1.5rem;display:flex;flex-direction:column;gap:0.5rem">
+        <label class="check-row">
+          <input type="checkbox" id="swing-uptrend" />
+          <span>Nur Werte mit <strong>intaktem Aufwärtstrend</strong> (Kurs über MA50 &amp; MA200, höhere Tiefs in 6-Monats-Historie)</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="swing-earnings" />
+          <span>Nur Werte mit <strong>jüngst positivem Earnings-Beat</strong> (letztes 1–2 Quartale oder positive Guidance)</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 03 · Kriterien</p>
+        <h2 class="section__title">Trend-Gewichtung <em>0–3 pro Kriterium</em></h2>
+      </header>
+      <div class="weights" id="swing-weights"></div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 04 · Feinjustierung</p>
+        <h2 class="section__title">Anzahl &amp; Kontext</h2>
+      </header>
+      <div class="grid2">
+        <div>
+          <p class="block-label">Anzahl Ergebnisse</p>
+          <div class="seg" id="swing-count">
+            <button class="seg__btn" data-swing-count="5">5</button>
+            <button class="seg__btn seg__btn--active" data-swing-count="10">10</button>
+          </div>
+        </div>
+        <div>
+          <p class="block-label">Zusatz-Kontext (optional)</p>
+          <textarea id="swing-note" rows="2" placeholder='z.B. "Fokus auf Nebenwerte mit Earnings-Termin nächste Woche"'></textarea>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== LONG ===== -->
+  <div data-mode-content="long" hidden>
+    <section class="section">
+      <header class="section__head">
+        <div>
+          <p class="kicker">Schritt 01 · Long</p>
+          <h2 class="section__title">Preset wählen <em>oder frei konfigurieren</em></h2>
+        </div>
+      </header>
+      <span class="strategy-badge strategy-badge--long">Long · 6–24 Monate · Qualitätsinvestment</span>
+      <div class="presets" id="long-presets"></div>
+      <div class="inline-form" id="long-save-form" hidden>
+        <input type="text" id="long-preset-name" placeholder="Name des Presets" />
+        <button class="btn" id="long-btn-save">Speichern</button>
+        <button class="btn btn--ghost" id="long-btn-cancel">Abbrechen</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 02 · Universum</p>
+        <h2 class="section__title">Wo wird gesucht?</h2>
+      </header>
+      <div class="grid3">
+        <div>
+          <p class="block-label">Märkte</p>
+          <div class="chips" id="long-markets"></div>
+        </div>
+        <div>
+          <p class="block-label">Market Cap</p>
+          <div class="chips" id="long-marketcap"></div>
+        </div>
+        <div>
+          <p class="block-label">Optionen</p>
+          <div style="display:flex;flex-direction:column;gap:0.5rem">
+            <label class="check-row">
+              <input type="checkbox" id="long-liquidity" />
+              <span>Nur liquide Werte</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="long-dividend" />
+              <span><strong>Dividenden-Fokus</strong> — solide wachsende Dividende</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:1.5rem">
+        <p class="block-label">Sektoren <span class="block-note">· leer = alle</span></p>
+        <div class="chips" id="long-sectors"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 03 · Kriterien</p>
+        <h2 class="section__title">Qualitäts-Gewichtung <em>0–3 pro Kriterium</em></h2>
+      </header>
+      <div class="weights" id="long-weights"></div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 04 · Feinjustierung</p>
+        <h2 class="section__title">Anzahl &amp; Kontext</h2>
+      </header>
+      <div class="grid2">
+        <div>
+          <p class="block-label">Anzahl Ergebnisse</p>
+          <div class="seg" id="long-count">
+            <button class="seg__btn seg__btn--active" data-long-count="5">5</button>
+            <button class="seg__btn" data-long-count="10">10</button>
+          </div>
+        </div>
+        <div>
+          <p class="block-label">Zusatz-Kontext (optional)</p>
+          <textarea id="long-note" rows="2" placeholder='z.B. "Nur profitabel, ROIC > 15%"'></textarea>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== CONTRARIAN ===== -->
+  <div data-mode-content="contrarian" hidden>
+    <section class="section">
+      <header class="section__head">
+        <div>
+          <p class="kicker">Schritt 01 · Contrarian</p>
+          <h2 class="section__title">Preset wählen <em>oder frei konfigurieren</em></h2>
+        </div>
+      </header>
+      <span class="strategy-badge strategy-badge--contra">Contrarian · 3–12 Monate · Rebound-Potenzial</span>
+      <div class="presets" id="contra-presets"></div>
+      <div class="inline-form" id="contra-save-form" hidden>
+        <input type="text" id="contra-preset-name" placeholder="Name des Presets" />
+        <button class="btn" id="contra-btn-save">Speichern</button>
+        <button class="btn btn--ghost" id="contra-btn-cancel">Abbrechen</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 02 · Universum</p>
+        <h2 class="section__title">Wo wird gesucht?</h2>
+      </header>
+      <div class="grid3">
+        <div>
+          <p class="block-label">Märkte</p>
+          <div class="chips" id="contra-markets"></div>
+        </div>
+        <div>
+          <p class="block-label">Market Cap</p>
+          <div class="chips" id="contra-marketcap"></div>
+        </div>
+        <div>
+          <p class="block-label">Liquidität</p>
+          <label class="check-row">
+            <input type="checkbox" id="contra-liquidity" />
+            <span>Nur liquide Werte (keine Pink Sheets)</span>
+          </label>
+        </div>
+      </div>
+      <div style="margin-top:1.5rem">
+        <p class="block-label">Sektoren <span class="block-note">· leer = alle</span></p>
+        <div class="chips" id="contra-sectors"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 03 · Kriterien</p>
+        <h2 class="section__title">Contrarian-Gewichtung <em>0–3 pro Kriterium</em></h2>
+      </header>
+      <div class="weights" id="contra-weights"></div>
+    </section>
+
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Schritt 04 · Feinjustierung</p>
+        <h2 class="section__title">Anzahl &amp; Kontext</h2>
+      </header>
+      <div class="grid2">
+        <div>
+          <p class="block-label">Anzahl Ergebnisse</p>
+          <div class="seg" id="contra-count">
+            <button class="seg__btn seg__btn--active" data-contra-count="5">5</button>
+            <button class="seg__btn" data-contra-count="10">10</button>
+          </div>
+        </div>
+        <div>
+          <p class="block-label">Zusatz-Kontext (optional)</p>
+          <textarea id="contra-note" rows="2" placeholder='z.B. "Rückgang mind. 30% in letzten 6 Monaten"'></textarea>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== ETF ===== -->
+  <div data-mode-content="etf" hidden>
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">ETF-Scan</p>
+        <h2 class="section__title">ETF-Filter konfigurieren</h2>
+      </header>
+
+      <div class="grid3">
+        <div>
+          <p class="block-label">Kategorie <span class="block-note">· leer = alle</span></p>
+          <div class="chips" id="etf-categories"></div>
+        </div>
+        <div>
+          <p class="block-label">Region</p>
+          <div class="chips" id="etf-regions"></div>
+        </div>
+        <div>
+          <p class="block-label">Anbieter <span class="block-note">· leer = alle</span></p>
+          <div class="chips" id="etf-providers"></div>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:1.5rem">
+        <div>
+          <p class="block-label">Thematischer Fokus (optional)</p>
+          <input type="text" id="etf-thematic" placeholder='z.B. "Solar Energy", "AI Infrastructure", "Defense"' />
+        </div>
+        <div>
+          <p class="block-label">Max. TER (optional)</p>
+          <input type="text" id="etf-ter" placeholder='z.B. "0.30%"' style="width:100%" />
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:1.5rem">
+        <div>
+          <p class="block-label">Börsenlistung bevorzugt (optional)</p>
+          <input type="text" id="etf-listing" placeholder='z.B. "XETRA" oder "NYSE Arca"' style="width:100%" />
+        </div>
+        <div>
+          <p class="block-label">Anzahl Ergebnisse</p>
+          <div class="seg" id="etf-count">
+            <button class="seg__btn seg__btn--active" data-etf-count="5">5</button>
+            <button class="seg__btn" data-etf-count="10">10</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:1.5rem">
+        <p class="block-label">Zusatz-Kontext (optional)</p>
+        <textarea id="etf-note" rows="2" placeholder='z.B. "UCITS-konform für EU-Anleger, Ausschüttend bevorzugt"'></textarea>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== THEME ===== -->
+  <div data-mode-content="theme" hidden>
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Future-Themen</p>
+        <h2 class="section__title">Wähle ein Themenfeld</h2>
+      </header>
+      <div class="theme-grid" id="theme-grid"></div>
+    </section>
+  </div>
+
+  <!-- ===== HOT ===== -->
+  <div data-mode-content="hot" hidden>
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Hot Specs</p>
+        <h2 class="section__title">Heiß diskutierte Small-Caps</h2>
+      </header>
+      <div class="warn-box">
+        ⚠ Hochspekulativ. Werte werden mit ehrlichem Risiko-Tagging geliefert. Position-Sizing beachten.
+      </div>
+      <div class="grid2">
+        <div>
+          <p class="block-label">Region</p>
+          <div class="seg" id="hot-region">
+            <button class="seg__btn seg__btn--active" data-region="global">Global</button>
+            <button class="seg__btn" data-region="US">USA</button>
+            <button class="seg__btn" data-region="EU">EU</button>
+          </div>
+        </div>
+        <div>
+          <p class="block-label">Anzahl</p>
+          <div class="seg" id="hot-count">
+            <button class="seg__btn" data-hot-count="5">5</button>
+            <button class="seg__btn seg__btn--active" data-hot-count="8">8</button>
+            <button class="seg__btn" data-hot-count="12">12</button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:1.5rem">
+        <p class="block-label">Thematischer Fokus (optional)</p>
+        <input type="text" id="hot-focus" placeholder='z.B. "AI-Hype-Plays", "Biotech vor FDA-Termin", "Squeeze-Setups"' style="width:100%" />
+      </div>
+      <div style="margin-top:1rem">
+        <label class="check-row">
+          <input type="checkbox" id="hot-uptrend" />
+          <span>Nur Werte mit <strong>intaktem Aufwärtstrend</strong> (charttechnisch in 3–6 Monaten)</span>
+        </label>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== SYMBOL ===== -->
+  <div data-mode-content="symbol" hidden>
+    <section class="section">
+      <header class="section__head">
+        <p class="kicker">Einzel-Recherche</p>
+        <h2 class="section__title">Tiefenrecherche zu einem Wert</h2>
+      </header>
+      <div class="grid2">
+        <div>
+          <p class="block-label">Ticker / Symbol</p>
+          <input type="text" id="symbol-input" placeholder="z.B. NVDA, SAP, ASML" style="width:100%" />
+        </div>
+        <div>
+          <p class="block-label">Börsen-Hinweis (optional)</p>
+          <input type="text" id="symbol-hint" placeholder="z.B. Xetra, NASDAQ, LSE" style="width:100%" />
+        </div>
+      </div>
+      <p class="block-note" style="margin-top:0.7rem">Claude identifiziert den Wert per Web-Suche, recherchiert News + Katalysatoren und liefert das volle Profil zum Import in die Merkliste.</p>
+    </section>
+  </div>
+
+  <!-- PROMPT OUTPUT (alle Modi) -->
+  <section class="section">
+    <header class="section__head">
+      <div>
+        <p class="kicker">Ergebnis</p>
+        <h2 class="section__title">Generierter Prompt</h2>
+      </div>
+      <div class="section__actions">
+        <button class="btn btn--ghost" id="btn-toggle-prompt">↕ Ein-/Ausklappen</button>
+        <button class="btn" id="btn-copy" disabled>⎘ Prompt kopieren</button>
+      </div>
+    </header>
+    <div class="warn-box" id="warn-box" hidden></div>
+    <textarea id="prompt-output" readonly></textarea>
+    <div class="handoff" id="handoff" hidden>
+      <span class="handoff__icon">✦</span>
+      <span>Prompt kopieren → in claude.ai (mit Web-Suche) einfügen → JSON-Antwort in Merkliste via Import einlesen.</span>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>Trend-Scout · Prompt-Generator</span>
+  <span>localStorage · <a href="index.html" style="color:inherit">→ Merkliste</a></span>
+</footer>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="trendscout-prompts.js"></script>
+<script>
+// ============================================================
+//  TREND-SCOUT · App-Logik
+//  Zustand, Render, Event-Handling
+//  Prompt-Builder kommen aus trendscout-prompts.js
+// ============================================================
+
+const LS = {
+  swing:      'ts_swing',
+  long:       'ts_long',
+  contrarian: 'ts_contrarian',
+  presets:    'ts_presets',
+};
+
+function loadJSON(k, fb) { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } }
+function saveJSON(k, v)  { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn(e); } }
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function toast(msg, kind = 'info') {
+  const t = document.createElement('div');
+  t.className = `toast ${kind === 'success' ? 'toast--ok' : kind === 'error' ? 'toast--err' : ''}`;
+  t.textContent = msg;
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── State ──
+const state = {
+  mode: 'swing',
+
+  swing: loadJSON(LS.swing, {
+    markets: ['US', 'DE'],
+    sectors: [],
+    marketCap: ['Large', 'Mid'],
+    liquidityFilter: true,
+    uptrendOnly: false,
+    positiveEarningsOnly: false,
+    weights: { news: 2, technical: 2, fundamental: 1, rotation: 1, contra: 0, sentiment: 2 },
+    count: 10,
+    extraNote: '',
+  }),
+
+  long: loadJSON(LS.long, {
+    markets: ['US'],
+    sectors: [],
+    marketCap: ['Large', 'Mid'],
+    liquidityFilter: true,
+    dividendFocus: false,
+    weights: { fundamental: 3, moat: 2, growth: 2, valuation: 2, catalyst: 2, technical: 1 },
+    count: 5,
+    extraNote: '',
+  }),
+
+  contrarian: loadJSON(LS.contrarian, {
+    markets: ['US', 'DE'],
+    sectors: [],
+    marketCap: ['Large', 'Mid'],
+    liquidityFilter: true,
+    weights: { quality: 3, selloff_reason: 2, insider: 2, sentiment: 2, valuation: 1, reversal: 1 },
+    count: 5,
+    extraNote: '',
+  }),
+
+  etf: {
+    categories: [],
+    regions: ['Global'],
+    providers: [],
+    thematic: '',
+    maxTer: '',
+    listing: '',
+    count: 5,
+    extraNote: '',
+  },
+
+  symbol:     { input: '', hint: '' },
+  theme:      { selected: null },
+  hot:        { region: 'global', count: 8, focus: '', uptrendOnly: false },
+
+  presets: (() => {
+    const user = loadJSON(LS.presets, []);
+    return [...BUILTIN_PRESETS, ...user.filter(p => !p.builtin)];
+  })(),
+};
+
+function persist() {
+  saveJSON(LS.swing,      state.swing);
+  saveJSON(LS.long,       state.long);
+  saveJSON(LS.contrarian, state.contrarian);
+  saveJSON(LS.presets,    state.presets.filter(p => !p.builtin));
+}
+
+// ── Render helpers ──
+function renderChips(containerId, items, activeArr, dataAttr) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = items.map(m =>
+    `<button class="chip ${activeArr.includes(m) ? 'chip--active' : ''}" data-${dataAttr}="${esc(m)}">${esc(m)}</button>`
+  ).join('');
+}
+
+function renderWeights(containerId, criteria, weightsObj) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = criteria.map(t => `
+    <div class="weight-row">
+      <div>
+        <div class="weight-row__label">${esc(t.label)}</div>
+        <div class="weight-row__desc">${esc(t.desc)}</div>
+      </div>
+      <div class="weight-row__ctrl">
+        ${[0,1,2,3].map(v =>
+          `<button class="weight-btn ${weightsObj[t.key] === v ? 'weight-btn--active' : ''}" data-weight-key="${t.key}" data-weight-val="${v}">${v}</button>`
+        ).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderPresets(containerId, saveFormId, mode) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const modePresets = state.presets.filter(p => !p.mode || p.mode === mode);
+
+  const badgeMap = { swing: 'swing', long: 'long', contrarian: 'contra' };
+  el.innerHTML = modePresets.map(p => `
+    <div class="preset">
+      <button class="preset__btn" data-preset="${p.id}">
+        <span class="preset__name">${esc(p.name)}</span>
+        <span class="preset__meta">${(p.markets||[]).join('·')}${(p.sectors||[]).length ? ' · ' + p.sectors.slice(0,2).join(', ') + (p.sectors.length > 2 ? '…' : '') : ''}</span>
+      </button>
+      ${p.builtin
+        ? `<span class="preset__badge preset__badge--${badgeMap[p.mode] || ''}">System</span>`
+        : `<button class="preset__del" data-preset-del="${p.id}" title="Löschen">×</button>`}
+    </div>
+  `).join('') + `<button class="preset__add" data-preset-add="${mode}">+ Aktuelle Config speichern</button>`;
+}
+
+function renderSeg(containerId, dataAttr, activeVal) {
+  document.querySelectorAll(`#${containerId} [${dataAttr}]`).forEach(b => {
+    b.classList.toggle('seg__btn--active', b.getAttribute(dataAttr) == activeVal);
+  });
+}
+
+// ── Main render ──
+function render() {
+  // Mode tabs
+  document.querySelectorAll('[data-mode]').forEach(b => {
+    const isActive = b.dataset.mode === state.mode;
+    b.classList.toggle('mode-tab--active', isActive);
+  });
+  document.querySelectorAll('[data-mode-content]').forEach(el => {
+    el.hidden = el.dataset.modeContent !== state.mode;
+  });
+
+  // SWING
+  renderPresets('swing-presets', 'swing-save-form', 'swing');
+  renderChips('swing-markets',   MARKETS,     state.swing.markets,   'swing-market');
+  renderChips('swing-marketcap', MARKET_CAPS, state.swing.marketCap, 'swing-cap');
+  renderChips('swing-sectors',   SECTORS,     state.swing.sectors,   'swing-sector');
+  renderWeights('swing-weights', SWING_CRITERIA, state.swing.weights);
+  const swLiq = document.getElementById('swing-liquidity');
+  if (swLiq) swLiq.checked = state.swing.liquidityFilter;
+  const swUp  = document.getElementById('swing-uptrend');
+  if (swUp) swUp.checked = !!state.swing.uptrendOnly;
+  const swEar = document.getElementById('swing-earnings');
+  if (swEar) swEar.checked = !!state.swing.positiveEarningsOnly;
+  renderSeg('swing-count', 'data-swing-count', state.swing.count);
+  const swNote = document.getElementById('swing-note');
+  if (swNote && swNote.value !== state.swing.extraNote) swNote.value = state.swing.extraNote;
+
+  // LONG
+  renderPresets('long-presets', 'long-save-form', 'long');
+  renderChips('long-markets',   MARKETS,     state.long.markets,   'long-market');
+  renderChips('long-marketcap', MARKET_CAPS, state.long.marketCap, 'long-cap');
+  renderChips('long-sectors',   SECTORS,     state.long.sectors,   'long-sector');
+  renderWeights('long-weights', LONG_CRITERIA, state.long.weights);
+  const lgLiq = document.getElementById('long-liquidity');
+  if (lgLiq) lgLiq.checked = state.long.liquidityFilter;
+  const lgDiv = document.getElementById('long-dividend');
+  if (lgDiv) lgDiv.checked = !!state.long.dividendFocus;
+  renderSeg('long-count', 'data-long-count', state.long.count);
+  const lgNote = document.getElementById('long-note');
+  if (lgNote && lgNote.value !== state.long.extraNote) lgNote.value = state.long.extraNote;
+
+  // CONTRARIAN
+  renderPresets('contra-presets', 'contra-save-form', 'contrarian');
+  renderChips('contra-markets',   MARKETS,     state.contrarian.markets,   'contra-market');
+  renderChips('contra-marketcap', MARKET_CAPS, state.contrarian.marketCap, 'contra-cap');
+  renderChips('contra-sectors',   SECTORS,     state.contrarian.sectors,   'contra-sector');
+  renderWeights('contra-weights', CONTRARIAN_CRITERIA, state.contrarian.weights);
+  const ctLiq = document.getElementById('contra-liquidity');
+  if (ctLiq) ctLiq.checked = state.contrarian.liquidityFilter;
+  renderSeg('contra-count', 'data-contra-count', state.contrarian.count);
+  const ctNote = document.getElementById('contra-note');
+  if (ctNote && ctNote.value !== state.contrarian.extraNote) ctNote.value = state.contrarian.extraNote;
+
+  // ETF
+  renderChips('etf-categories', ETF_CATEGORIES, state.etf.categories, 'etf-cat');
+  renderChips('etf-regions',    ETF_REGIONS,    state.etf.regions,    'etf-region');
+  renderChips('etf-providers',  ETF_PROVIDERS,  state.etf.providers,  'etf-prov');
+  renderSeg('etf-count', 'data-etf-count', state.etf.count);
+
+  // Theme
+  const themeGrid = document.getElementById('theme-grid');
+  if (themeGrid) {
+    themeGrid.innerHTML = THEME_PRESETS.map(t => `
+      <button type="button" class="theme-card ${state.theme.selected === t.key ? 'theme-card--active' : ''}" data-theme="${t.key}">
+        <div class="theme-card__head">
+          <span class="theme-card__title">${esc(t.label)}</span>
+          <span class="theme-card__chevron">${state.theme.selected === t.key ? '✓' : '›'}</span>
+        </div>
+        <div class="theme-card__body">
+          <div class="theme-card__intro">${esc(t.intro)}</div>
+          <ul class="theme-card__subs">${t.subs.map(s => `<li>${esc(s.name)}</li>`).join('')}</ul>
+        </div>
+      </button>
+    `).join('');
+  }
+
+  // Symbol
+  const symInp  = document.getElementById('symbol-input');
+  const symHint = document.getElementById('symbol-hint');
+  if (symInp  && symInp.value  !== state.symbol.input) symInp.value  = state.symbol.input;
+  if (symHint && symHint.value !== state.symbol.hint)  symHint.value = state.symbol.hint;
+
+  // Hot
+  document.querySelectorAll('[data-region]').forEach(b =>
+    b.classList.toggle('seg__btn--active', b.dataset.region === state.hot.region)
+  );
+  document.querySelectorAll('[data-hot-count]').forEach(b =>
+    b.classList.toggle('seg__btn--active', parseInt(b.dataset.hotCount) === state.hot.count)
+  );
+  const hotFocus = document.getElementById('hot-focus');
+  if (hotFocus && hotFocus.value !== state.hot.focus) hotFocus.value = state.hot.focus;
+  const hotUp = document.getElementById('hot-uptrend');
+  if (hotUp) hotUp.checked = !!state.hot.uptrendOnly;
+
+  // Prompt output
+  updatePrompt();
+}
+
+function updatePrompt() {
+  let prompt = null, valid = false, warnMsg = '';
+
+  if (state.mode === 'swing') {
+    prompt = buildSwingPrompt(state.swing);
+    valid  = prompt !== null;
+    if (!valid) warnMsg = 'Mindestens ein Swing-Kriterium muss mit Gewicht > 0 versehen sein.';
+  } else if (state.mode === 'long') {
+    prompt = buildLongPrompt(state.long);
+    valid  = prompt !== null;
+    if (!valid) warnMsg = 'Mindestens ein Long-Kriterium muss mit Gewicht > 0 versehen sein.';
+  } else if (state.mode === 'contrarian') {
+    prompt = buildContrarianPrompt(state.contrarian);
+    valid  = prompt !== null;
+    if (!valid) warnMsg = 'Mindestens ein Contrarian-Kriterium muss mit Gewicht > 0 versehen sein.';
+  } else if (state.mode === 'etf') {
+    prompt = buildEtfPrompt(state.etf);
+    valid  = true;
+  } else if (state.mode === 'theme') {
+    if (state.theme.selected) {
+      prompt = buildSectorPrompt(state.theme.selected);
+      valid  = prompt !== null;
+    } else {
+      warnMsg = 'Wähle ein Themenfeld aus.';
+    }
+  } else if (state.mode === 'hot') {
+    prompt = buildHotPrompt(state.hot);
+    valid  = true;
+  } else if (state.mode === 'symbol') {
+    if (state.symbol.input.trim()) {
+      prompt = buildSymbolPrompt(state.symbol.input, state.symbol.hint);
+      valid  = true;
+    } else {
+      warnMsg = 'Gib ein Symbol ein.';
+    }
+  }
+
+  const warnBox = document.getElementById('warn-box');
+  warnBox.hidden    = valid || !warnMsg;
+  warnBox.textContent = warnMsg;
+  document.getElementById('prompt-output').value = prompt || '';
+  document.getElementById('btn-copy').disabled   = !valid;
+  document.getElementById('handoff').hidden       = !valid;
+}
+
+// ── Preset actions ──
+function applyPreset(id) {
+  const p = state.presets.find(x => x.id === id);
+  if (!p) return;
+  const mode = p.mode || 'swing';
+  const target = state[mode] || state.swing;
+  if (p.markets)     target.markets   = [...p.markets];
+  if (p.sectors)     target.sectors   = [...p.sectors];
+  if (p.marketCap)   target.marketCap = [...p.marketCap];
+  if (p.weights)     target.weights   = { ...p.weights };
+  if (p.count)       target.count     = p.count;
+  if ('liquidityFilter' in p) target.liquidityFilter = p.liquidityFilter;
+  if ('dividendFocus'   in p) target.dividendFocus   = p.dividendFocus;
+  target.extraNote = '';
+  state.mode = mode;
+  persist();
+  render();
+  toast(`Preset "${p.name}" geladen`);
+}
+
+function deletePreset(id) {
+  state.presets = state.presets.filter(p => p.id !== id);
+  persist();
+  render();
+}
+
+function saveAsPreset(name, mode) {
+  const src = state[mode] || state.swing;
+  const newP = {
+    id: `user-${Date.now()}`, builtin: false, mode,
+    name, markets: [...src.markets], sectors: [...src.sectors],
+    marketCap: [...src.marketCap], liquidityFilter: src.liquidityFilter,
+    weights: { ...src.weights }, count: src.count,
+  };
+  if (mode === 'long')        newP.dividendFocus = src.dividendFocus;
+  state.presets.push(newP);
+  persist();
+  render();
+  toast(`Preset "${name}" gespeichert`, 'success');
+}
+
+// ── Copy ──
+async function copyPrompt() {
+  const text = document.getElementById('prompt-output').value;
+  if (!text) return;
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); toast('Prompt kopiert — in Claude-Chat einfügen', 'success'); return; } catch {}
+  }
+  try {
+    const ta = document.getElementById('prompt-output');
+    ta.focus(); ta.select();
+    if (document.execCommand('copy')) { toast('Prompt kopiert', 'success'); return; }
+  } catch {}
+  document.getElementById('prompt-output').select();
+  toast('Auto-Kopie blockiert — Strg+C / Cmd+C drücken', 'error');
+}
+
+// ── Toggle array helper ──
+function toggleArr(arr, val) {
+  return arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val];
+}
+
+// ── Init ──
+function init() {
+  render();
+
+  // Mode tabs
+  document.getElementById('mode-tabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-mode]');
+    if (!b) return;
+    state.mode = b.dataset.mode;
+    render();
+  });
+
+  // Generic chip delegation (markets, caps, sectors, etf filters)
+  document.body.addEventListener('click', e => {
+    const t = e.target.closest('[data-swing-market],[data-swing-cap],[data-swing-sector],[data-long-market],[data-long-cap],[data-long-sector],[data-contra-market],[data-contra-cap],[data-contra-sector],[data-etf-cat],[data-etf-region],[data-etf-prov]');
+    if (!t) return;
+    const d = t.dataset;
+    if (d.swingMarket)  { state.swing.markets   = toggleArr(state.swing.markets,   d.swingMarket);  persist(); render(); }
+    if (d.swingCap)     { state.swing.marketCap  = toggleArr(state.swing.marketCap,  d.swingCap);    persist(); render(); }
+    if (d.swingSector)  { state.swing.sectors    = toggleArr(state.swing.sectors,   d.swingSector);  persist(); render(); }
+    if (d.longMarket)   { state.long.markets     = toggleArr(state.long.markets,    d.longMarket);   persist(); render(); }
+    if (d.longCap)      { state.long.marketCap   = toggleArr(state.long.marketCap,  d.longCap);      persist(); render(); }
+    if (d.longSector)   { state.long.sectors     = toggleArr(state.long.sectors,    d.longSector);   persist(); render(); }
+    if (d.contraMarket) { state.contrarian.markets   = toggleArr(state.contrarian.markets,   d.contraMarket);  persist(); render(); }
+    if (d.contraCap)    { state.contrarian.marketCap  = toggleArr(state.contrarian.marketCap,  d.contraCap);   persist(); render(); }
+    if (d.contraSector) { state.contrarian.sectors    = toggleArr(state.contrarian.sectors,   d.contraSector); persist(); render(); }
+    if (d.etfCat)    { state.etf.categories = toggleArr(state.etf.categories, d.etfCat);    render(); }
+    if (d.etfRegion) { state.etf.regions    = toggleArr(state.etf.regions,    d.etfRegion);  render(); }
+    if (d.etfProv)   { state.etf.providers  = toggleArr(state.etf.providers,  d.etfProv);    render(); }
+  });
+
+  // Weight buttons (all modes)
+  document.body.addEventListener('click', e => {
+    const t = e.target.closest('[data-weight-key]');
+    if (!t) return;
+    const key = t.dataset.weightKey, val = parseInt(t.dataset.weightVal);
+    if (state.mode === 'swing')       state.swing.weights[key]       = val;
+    else if (state.mode === 'long')   state.long.weights[key]        = val;
+    else if (state.mode === 'contrarian') state.contrarian.weights[key] = val;
+    persist(); render();
+  });
+
+  // Seg buttons: swing-count, long-count, contra-count, etf-count, hot-count, region
+  document.body.addEventListener('click', e => {
+    const t = e.target.closest('[data-swing-count],[data-long-count],[data-contra-count],[data-etf-count],[data-hot-count],[data-region]');
+    if (!t) return;
+    const d = t.dataset;
+    if (d.swingCount)  { state.swing.count       = parseInt(d.swingCount);  persist(); render(); }
+    if (d.longCount)   { state.long.count        = parseInt(d.longCount);   persist(); render(); }
+    if (d.contraCount) { state.contrarian.count  = parseInt(d.contraCount); persist(); render(); }
+    if (d.etfCount)    { state.etf.count         = parseInt(d.etfCount);    render(); }
+    if (d.hotCount)    { state.hot.count         = parseInt(d.hotCount);    render(); }
+    if (d.region)      { state.hot.region        = d.region;               render(); }
+  });
+
+  // Preset buttons
+  document.body.addEventListener('click', e => {
+    const t = e.target.closest('[data-preset],[data-preset-del],[data-preset-add]');
+    if (!t) return;
+    if (t.dataset.preset)    applyPreset(t.dataset.preset);
+    if (t.dataset.presetDel) { if (confirm('Preset löschen?')) deletePreset(t.dataset.presetDel); }
+    if (t.dataset.presetAdd) {
+      const mode = t.dataset.presetAdd;
+      document.getElementById(`${mode === 'contrarian' ? 'contra' : mode}-save-form`).hidden = false;
+      document.getElementById(`${mode === 'contrarian' ? 'contra' : mode}-preset-name`).focus();
+    }
+  });
+
+  // Preset save/cancel
+  ['swing','long','contra'].forEach(prefix => {
+    const mode = prefix === 'contra' ? 'contrarian' : prefix;
+    document.getElementById(`${prefix}-btn-save`)?.addEventListener('click', () => {
+      const name = document.getElementById(`${prefix}-preset-name`).value.trim();
+      if (name) {
+        saveAsPreset(name, mode);
+        document.getElementById(`${prefix}-save-form`).hidden = true;
+        document.getElementById(`${prefix}-preset-name`).value = '';
+      }
+    });
+    document.getElementById(`${prefix}-btn-cancel`)?.addEventListener('click', () => {
+      document.getElementById(`${prefix}-save-form`).hidden = true;
+      document.getElementById(`${prefix}-preset-name`).value = '';
+    });
+  });
+
+  // Checkboxes
+  document.getElementById('swing-liquidity').onchange = e => { state.swing.liquidityFilter = e.target.checked; persist(); updatePrompt(); };
+  document.getElementById('swing-uptrend').onchange   = e => { state.swing.uptrendOnly = e.target.checked; persist(); updatePrompt(); };
+  document.getElementById('swing-earnings').onchange  = e => { state.swing.positiveEarningsOnly = e.target.checked; persist(); updatePrompt(); };
+  document.getElementById('long-liquidity').onchange  = e => { state.long.liquidityFilter = e.target.checked; persist(); updatePrompt(); };
+  document.getElementById('long-dividend').onchange   = e => { state.long.dividendFocus = e.target.checked; persist(); updatePrompt(); };
+  document.getElementById('contra-liquidity').onchange = e => { state.contrarian.liquidityFilter = e.target.checked; persist(); updatePrompt(); };
+  document.getElementById('hot-uptrend').onchange     = e => { state.hot.uptrendOnly = e.target.checked; updatePrompt(); };
+
+  // Textareas / inputs (extra notes, symbol, hot-focus, etf fields)
+  document.getElementById('swing-note').oninput = e => { state.swing.extraNote = e.target.value; persist(); updatePrompt(); };
+  document.getElementById('long-note').oninput  = e => { state.long.extraNote  = e.target.value; persist(); updatePrompt(); };
+  document.getElementById('contra-note').oninput = e => { state.contrarian.extraNote = e.target.value; persist(); updatePrompt(); };
+
+  document.getElementById('symbol-input').addEventListener('input', e => { state.symbol.input = e.target.value; updatePrompt(); });
+  document.getElementById('symbol-hint').addEventListener('input',  e => { state.symbol.hint  = e.target.value; updatePrompt(); });
+  document.getElementById('hot-focus').addEventListener('input',    e => { state.hot.focus    = e.target.value; updatePrompt(); });
+
+  document.getElementById('etf-thematic').addEventListener('input', e => { state.etf.thematic = e.target.value; updatePrompt(); });
+  document.getElementById('etf-ter').addEventListener('input',      e => { state.etf.maxTer   = e.target.value; updatePrompt(); });
+  document.getElementById('etf-listing').addEventListener('input',  e => { state.etf.listing  = e.target.value; updatePrompt(); });
+  document.getElementById('etf-note').addEventListener('input',     e => { state.etf.extraNote = e.target.value; updatePrompt(); });
+
+  // Theme cards
+  document.getElementById('theme-grid')?.addEventListener('click', e => {
+    const card = e.target.closest('[data-theme]');
+    if (!card) return;
+    state.theme.selected = state.theme.selected === card.dataset.theme ? null : card.dataset.theme;
+    render();
+  });
+
+  // Copy & Toggle
+  document.getElementById('btn-copy').onclick = copyPrompt;
+  document.getElementById('btn-toggle-prompt').onclick = () =>
+    document.getElementById('prompt-output').classList.toggle('collapsed');
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
