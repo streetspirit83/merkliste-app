@@ -2907,6 +2907,7 @@ function _dashHeatmap(rows) {
   );
   const MAS  = ["ma20", "ma50", "ma200"];
   const LABS = ["MA20", "MA50", "MA200"];
+  const withData = sorted.filter(r => MAS.some(ma => r.f[ma] != null)).length;
   const head = LABS.map(l => `<th class="dhm__th">${l}</th>`).join("");
   const body = sorted.map(r => {
     const cells = MAS.map(ma => {
@@ -2919,13 +2920,70 @@ function _dashHeatmap(rows) {
     const bucketDot = `<span class="dhm__dot dhm__dot--${r.f.bucket}"></span>`;
     return `<tr><td class="dhm__sym">${bucketDot}${r.f.symbol}</td>${cells}</tr>`;
   }).join("");
-  return `<div class="dash-section">
-    <div class="dash-section__title">MA-Alignment</div>
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">MA-Alignment <span class="dash-count">${withData}/${sorted.length}</span></div>
     <div class="dhm-wrap">
       <table class="dhm">
         <thead><tr><th></th>${head}</tr></thead>
         <tbody>${body}</tbody>
       </table>
+    </div>
+  </div>`;
+}
+
+/* S — RSI · Sentiment Matrix (Watchlist) */
+function _dashSentimentMatrix(rows) {
+  const pts = rows
+    .filter(r => r.f.bucket === "watchlist" && r.f.rsi != null)
+    .map(r => ({ sym: r.f.symbol, rsi: r.f.rsi, sent: r.f.sentiment_score ?? 0 }));
+
+  if (!pts.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">RSI · Sentiment</div>
+    <div class="dash-empty">Watchlist ohne RSI-Daten (Full-Refresh erforderlich)</div>
+  </div>`;
+
+  const W = 280, H = 180;
+  const PL = 28, PR = 12, PT = 14, PB = 26;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const toX = s => PL + ((Math.max(-1, Math.min(1, s)) + 1) / 2) * iW;
+  const toY = r => PT + (1 - Math.max(0, Math.min(100, r)) / 100) * iH;
+  const qx = toX(0), y70 = toY(70), y30 = toY(30);
+  const quadLabels = [
+    { x: PL + iW * 0.76, y: PT + 10,      txt: "Stark & Heiß" },
+    { x: PL + iW * 0.24, y: PT + 10,      txt: "Überkauft"    },
+    { x: PL + iW * 0.76, y: H - PB - 6,   txt: "Kaufzone"     },
+    { x: PL + iW * 0.24, y: H - PB - 6,   txt: "Schwach"      },
+  ];
+  const dots = pts.map(p => {
+    const cx = toX(p.sent), cy = toY(p.rsi);
+    const fill = p.rsi < 30 ? "var(--pos)" : p.rsi > 70 ? "var(--neg)" : "var(--accent)";
+    return `<g>
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${fill}" opacity=".82"/>
+      <text x="${(cx+7).toFixed(1)}" y="${(cy+3).toFixed(1)}" font-size="9" font-family="DM Sans,sans-serif" fill="var(--text)">${p.sym}</text>
+    </g>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">RSI · Sentiment <span class="dash-count">${pts.length}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">
+      <rect x="${PL}" y="${PT}" width="${(qx-PL).toFixed(1)}" height="${(y70-PT).toFixed(1)}" fill="var(--neg)" opacity=".04"/>
+      <rect x="${qx.toFixed(1)}" y="${PT}" width="${(PL+iW-qx).toFixed(1)}" height="${(y70-PT).toFixed(1)}" fill="var(--pos)" opacity=".06"/>
+      <rect x="${PL}" y="${y30.toFixed(1)}" width="${(qx-PL).toFixed(1)}" height="${(PT+iH-y30).toFixed(1)}" fill="var(--muted)" opacity=".04"/>
+      <rect x="${qx.toFixed(1)}" y="${y30.toFixed(1)}" width="${(PL+iW-qx).toFixed(1)}" height="${(PT+iH-y30).toFixed(1)}" fill="var(--accent)" opacity=".05"/>
+      <line x1="${qx.toFixed(1)}" y1="${PT}" x2="${qx.toFixed(1)}" y2="${(PT+iH).toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+      <line x1="${PL}" y1="${y70.toFixed(1)}" x2="${(PL+iW).toFixed(1)}" y2="${y70.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="${PL}" y1="${y30.toFixed(1)}" x2="${(PL+iW).toFixed(1)}" y2="${y30.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="${(PL-4)}" y="${y70.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">70</text>
+      <text x="${(PL-4)}" y="${y30.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">30</text>
+      <text x="${PL}" y="${H-4}" font-size="8" fill="var(--muted)">Bearish</text>
+      <text x="${(PL+iW)}" y="${H-4}" font-size="8" text-anchor="end" fill="var(--muted)">Bullish</text>
+      ${quadLabels.map(l => `<text x="${l.x.toFixed(1)}" y="${l.y}" font-size="8" text-anchor="middle" fill="var(--muted)" opacity=".5">${l.txt}</text>`).join("")}
+      ${dots}
+    </svg>
+    <div class="dash-legend">
+      <span class="dash-legend__dot" style="background:var(--pos)"></span>RSI &lt;30
+      <span class="dash-legend__dot" style="background:var(--accent)"></span>Neutral
+      <span class="dash-legend__dot" style="background:var(--neg)"></span>RSI &gt;70
     </div>
   </div>`;
 }
@@ -2938,6 +2996,7 @@ function _dashScatter(rows) {
       ? { sym: r.f.symbol, rsi: r.f.rsi, p52, bucket: r.f.bucket }
       : null;
   }).filter(Boolean);
+  const countLabel = pts.length ? ` <span class="dash-count">${pts.length}</span>` : "";
 
   const W = 260, H = 170, PL = 32, PR = 8, PT = 8, PB = 28;
   const iw = W - PL - PR, ih = H - PT - PB;
@@ -2995,7 +3054,7 @@ function _dashScatter(rows) {
 
   return `<div class="dash-section dash-section--half">
     <div class="dash-section__head">
-      <div class="dash-section__title">52W × RSI</div>
+      <div class="dash-section__title">52W × RSI${countLabel}</div>
       <div class="dtog">
         <button class="dtog__btn is-active" data-k="k2">Scatter</button>
         <button class="dtog__btn" data-k="k3">Matrix</button>
@@ -3017,7 +3076,7 @@ function _dashMomentum(rows) {
   }).filter(Boolean).sort((a, b) => b.pct - a.pct);
 
   if (!items.length) return `<div class="dash-section dash-section--half">
-    <div class="dash-section__title">Momentum 7T</div><div class="dash-empty">Keine 7T-Daten</div></div>`;
+    <div class="dash-section__title">Momentum 7T</div><div class="dash-empty">Keine 7T-Daten (Full-Refresh erforderlich)</div></div>`;
 
   const maxAbs = Math.max(...items.map(m => Math.abs(m.pct)), 0.01);
   const bars = items.slice(0, 15).map(m => {
@@ -3031,7 +3090,7 @@ function _dashMomentum(rows) {
   }).join("");
 
   return `<div class="dash-section dash-section--half">
-    <div class="dash-section__title">Momentum 7T</div>
+    <div class="dash-section__title">Momentum 7T <span class="dash-count">${items.length}</span></div>
     <div class="dash-bars">${bars}</div>
   </div>`;
 }
@@ -3050,7 +3109,7 @@ function _dashVolatility(rows) {
   }).filter(Boolean).sort((a, b) => b.vol - a.vol);
 
   if (!items.length) return `<div class="dash-section dash-section--half">
-    <div class="dash-section__title">Volatilität 7T</div><div class="dash-empty">Keine 7T-Daten</div></div>`;
+    <div class="dash-section__title">Volatilität 7T</div><div class="dash-empty">Keine 7T-Daten (Full-Refresh erforderlich)</div></div>`;
 
   const maxV = Math.max(...items.map(v => v.vol), 0.01);
   const bars = items.slice(0, 15).map(v => {
@@ -3063,7 +3122,7 @@ function _dashVolatility(rows) {
   }).join("");
 
   return `<div class="dash-section dash-section--half">
-    <div class="dash-section__title">Volatilität 7T</div>
+    <div class="dash-section__title">Volatilität 7T <span class="dash-count">${items.length}</span></div>
     <div class="dash-bars">${bars}</div>
   </div>`;
 }
@@ -3100,7 +3159,7 @@ function _dashOpportunity(rows) {
   }).join("");
 
   return `<div class="dash-section dash-section--half">
-    <div class="dash-section__title">Opportunity Score</div>
+    <div class="dash-section__title">Opportunity Score <span class="dash-count">${scored.length}</span></div>
     <div class="dash-bars">${bars}</div>
   </div>`;
 }
@@ -3112,7 +3171,10 @@ function renderDashboard() {
 
   el.innerHTML = `<div class="dash">
     ${_dashKanban(rows)}
-    ${_dashHeatmap(rows)}
+    <div class="dash__grid2">
+      ${_dashHeatmap(rows)}
+      ${_dashSentimentMatrix(rows)}
+    </div>
     <div class="dash__grid2">
       ${_dashScatter(rows)}
       ${_dashMomentum(rows)}

@@ -845,6 +845,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .dash-section { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--s-3); }
 .dash-section--half { /* inherits */ }
 .dash-section__title { font-size: var(--fs-l); font-weight: var(--fw-b); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: var(--s-2); }
+.dash-count { display: inline-block; font-size: 10px; font-weight: var(--fw-b); background: var(--surface); color: var(--muted); border-radius: 8px; padding: 0 5px; margin-left: 4px; vertical-align: middle; text-transform: none; letter-spacing: 0; }
 .dash-section__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-2); }
 .dash-section__head .dash-section__title { margin-bottom: 0; }
 .dash-empty { color: var(--muted); font-size: var(--fs-l); padding: var(--s-2) 0; }
