@@ -22,12 +22,12 @@
   --topbar-h: 56px; --subbar-h: 48px; --botbar-h: 64px; --bulkbar-h: 40px; --benchbar-h: 60px;
 }
 [data-theme="dark"] {
-  --bg:      #2d3b53;
-  --text:    #ecfeff;
-  --surface: #1a2332;
-  --border:  #2e3f56;
+  --bg:      #1a2238;
+  --text:    #f1f5f9;
+  --surface: #242f4c;
+  --border:  #3b4b75;
   --muted:   #94a3b8;
-  --accent:  #06b6d4;
+  --accent:  #6366f1;
   --pos:     #3fb950;
   --neg:     #f85149;
 }
