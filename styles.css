@@ -22,14 +22,14 @@
   --topbar-h: 56px; --subbar-h: 48px; --botbar-h: 64px; --bulkbar-h: 40px; --benchbar-h: 60px;
 }
 [data-theme="dark"] {
-   --bg:      #0b0f19;
-  --text:    #e2e8f0;
-  --surface: #131a26;
-  --border:  #243247;
-  --muted:   #718096;
-  --accent:  #38bdf8;
-  --pos:     #34d399;
-  --neg:     #f87171;
+  --bg:      #090d12;
+  --text:    #f1f5f9;
+  --surface: #121820;
+  --border:  #2d3748;
+  --muted:   #64748b;
+  --accent:  #2563eb;
+  --pos:     #3fb950;
+  --neg:     #f85149;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
