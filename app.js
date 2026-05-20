@@ -750,9 +750,10 @@ const Calc = {
 function flat(t) {
   const s = t.stamm, u = t.user, q = t.quotes;
   const c = (t.calculations && t.calculations.trends) || {};
-  const rate    = Store.state.config.eur_usd;
-  const rawCcy  = q.currency_returned || s.currency;
-  const price   = (rawCcy === "USD" && rate && q.price != null) ? +(q.price / rate).toFixed(4) : q.price;
+  const rate     = Store.state.config.eur_usd;
+  const rawCcy   = q.currency_returned || s.currency;
+  const toEur    = v => (rawCcy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
+  const price    = toEur(q.price);
   const displayCcy = (rawCcy === "USD" && rate) ? "EUR" : rawCcy;
   return {
     id: t.id, _raw: t,
@@ -765,12 +766,13 @@ function flat(t) {
     alerts: u.alerts || [],
     price, currency_returned: displayCcy, day_change_pct: q.day_change_pct,
     volume: q.volume, avg_volume: q.avg_volume,
-    pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low, high_52w: q.high_52w, low_52w: q.low_52w,
+    pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low,
+    high_52w: toEur(q.high_52w), low_52w: toEur(q.low_52w),
     rsi: q.rsi, macd: q.macd, macd_signal: q.macd_signal, macd_histogram: q.macd_histogram,
-    ma20: q.ma20, ma20_delta_pct: q.ma20_delta_pct,
-    ma50: q.ma50, ma50_delta_pct: q.ma50_delta_pct,
-    ma200: q.ma200, ma200_delta_pct: q.ma200_delta_pct,
-    last7d: q.last7d || null,
+    ma20: toEur(q.ma20), ma20_delta_pct: q.ma20_delta_pct,
+    ma50: toEur(q.ma50), ma50_delta_pct: q.ma50_delta_pct,
+    ma200: toEur(q.ma200), ma200_delta_pct: q.ma200_delta_pct,
+    last7d: q.last7d ? q.last7d.map(toEur) : null,
     ts: q.ts,
     sentiment_score: c.sentiment_score, trend_strength: c.trend_strength,
     performance_pct: c.performance_pct, performance_abs: c.performance_abs,
@@ -1093,9 +1095,10 @@ function sparkSVG(t) {
   }
   const W = 200, H = 56;
   const isPort = t.bucket === "portfolio";
-  const extras = [t.ma20, t.ma50, t.ma200, t.high_52w, t.low_52w,
-                  isPort ? t.entry_price_manual : null].filter(v => v != null);
-  const all    = [...closes, ...extras];
+  // 52W H/L excluded from scale — they can be far from current price and would compress the chart
+  const scaleExtras = [t.ma20, t.ma50, t.ma200,
+                       isPort ? t.entry_price_manual : null].filter(v => v != null);
+  const all    = [...closes, ...scaleExtras];
   const rawMin = Math.min(...all), rawMax = Math.max(...all);
   const pad    = (rawMax - rawMin) * 0.1 || rawMin * 0.02 || 1;
   const minV   = rawMin - pad, maxV = rawMax + pad;
@@ -1574,17 +1577,30 @@ function _autoInitTrade(t) {
 function _buildArchiveEntries() {
   const entries = [];
   for (const t of Store.state.tickers) {
-    const trades = t.user.trades || [];
+    const trades = [...(t.user.trades || [])].sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date.localeCompare(b.date);
+    });
     if (!trades.length) continue;
-    const buys = trades.filter(tr => tr.type === "buy");
-    const totalBuyShares = buys.reduce((s, tr) => s + (tr.shares || 0), 0);
-    const avgCost = totalBuyShares > 0
-      ? buys.reduce((s, tr) => s + (tr.price || 0) * (tr.shares || 0), 0) / totalBuyShares
-      : (t.user.entry_price_manual || null);
+    let runningShares = 0, runningCost = 0;
     for (const tr of trades) {
-      const pl_abs = (tr.type === "sell" && tr.price != null && avgCost != null && tr.shares != null)
-        ? +((tr.price - avgCost) * tr.shares).toFixed(2) : null;
-      entries.push({ t, tr, pl_abs, avgCost });
+      if (tr.type === "buy" && tr.price != null && tr.shares != null) {
+        runningShares += tr.shares;
+        runningCost   += tr.price * tr.shares;
+      } else if (tr.type === "sell" && tr.shares != null) {
+        const avgCost = runningShares > 0 ? +(runningCost / runningShares).toFixed(4) : null;
+        const pl_abs  = (tr.price != null && avgCost != null)
+          ? +((tr.price - avgCost) * tr.shares).toFixed(2) : null;
+        entries.push({ t, tr, pl_abs, avgCost });
+        const sold = Math.min(tr.shares, runningShares);
+        if (runningShares > 0) {
+          runningCost   -= (runningCost / runningShares) * sold;
+          runningShares -= sold;
+        }
+        if (runningShares <= 0) { runningShares = 0; runningCost = 0; }
+      }
     }
   }
   return entries.sort((a, b) => (b.tr.date || "").localeCompare(a.tr.date || ""));
@@ -1592,14 +1608,14 @@ function _buildArchiveEntries() {
 
 function exportArchiveCsv() {
   const entries = _buildArchiveEntries();
-  if (!entries.length) { toast("Keine Trades vorhanden", "neg"); return; }
-  const header = ["Symbol","Name","Datum","Typ","Kurs","Stück","P/L abs"];
-  const rows = entries.map(({ t, tr, pl_abs }) => [
+  if (!entries.length) { toast("Keine realisierten Gewinne vorhanden", "neg"); return; }
+  const header = ["Symbol","Name","Datum","Kurs","Stück","Ø Einstand","P/L abs"];
+  const rows = entries.map(({ t, tr, pl_abs, avgCost }) => [
     t.stamm.symbol, t.stamm.name || "", tr.date || "",
-    tr.type === "buy" ? "Buy" : "Sell",
-    tr.price  != null ? String(tr.price).replace(".", ",")  : "",
-    tr.shares != null ? String(tr.shares).replace(".", ",") : "",
-    pl_abs    != null ? String(pl_abs).replace(".", ",")    : ""
+    tr.price   != null ? String(tr.price).replace(".", ",")   : "",
+    tr.shares  != null ? String(tr.shares).replace(".", ",")  : "",
+    avgCost    != null ? String(avgCost).replace(".", ",")    : "",
+    pl_abs     != null ? String(pl_abs).replace(".", ",")     : ""
   ]);
   const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(";")).join("\r\n");
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
@@ -1610,13 +1626,13 @@ function exportArchiveCsv() {
 }
 
 const ARCH_COLS = [
-  { key: "symbol", label: "Symbol",  val: e => e.t.stamm.symbol },
-  { key: "name",   label: "Name",    val: e => e.t.stamm.name || "" },
-  { key: "date",   label: "Datum",   val: e => e.tr.date || "" },
-  { key: "type",   label: "Typ",     val: e => e.tr.type },
-  { key: "price",  label: "Kurs",    val: e => e.tr.price },
-  { key: "shares", label: "Stück",   val: e => e.tr.shares },
-  { key: "pl",     label: "P/L abs", val: e => e.pl_abs },
+  { key: "symbol",  label: "Symbol",     val: e => e.t.stamm.symbol },
+  { key: "name",    label: "Name",       val: e => e.t.stamm.name || "" },
+  { key: "date",    label: "Datum",      val: e => e.tr.date || "" },
+  { key: "price",   label: "Kurs",       val: e => e.tr.price },
+  { key: "shares",  label: "Stück",      val: e => e.tr.shares },
+  { key: "avgcost", label: "Ø Einstand", val: e => e.avgCost },
+  { key: "pl",      label: "P/L abs",    val: e => e.pl_abs },
 ];
 let _archSort = { col: "date", dir: -1 };
 
@@ -1636,7 +1652,9 @@ function renderArchiveView() {
   const thArrow = key => key === _archSort.col ? (_archSort.dir === 1 ? " ↑" : " ↓") : "";
   host.innerHTML = `
     <div class="arch-summary">
-      <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${totalPl >= 0 ? "+" : ""}${numFmt(totalPl)}</span></span>
+      <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${signedNum(totalPl, 0, "€")}</span>
+        <span class="dim" style="font-size:var(--fs-l);margin-left:6px">${entries.length} Verkäufe</span>
+      </span>
       <button class="btn-text" id="btn-arch-csv" style="margin-left:auto">
         <i data-lucide="download" class="icon icon-sm"></i>
         <span class="btn-text__label">CSV</span>
@@ -1644,14 +1662,14 @@ function renderArchiveView() {
     </div>
     <table class="arch-table">
       <thead><tr>${ARCH_COLS.map(c => `<th data-archcol="${c.key}" style="cursor:pointer">${c.label}${thArrow(c.key)}</th>`).join("")}</tr></thead>
-      <tbody>${entries.map(({ t, tr, pl_abs }) => `<tr>
+      <tbody>${entries.map(({ t, tr, pl_abs, avgCost }) => `<tr>
         <td><span class="sym-strong">${t.stamm.symbol}</span></td>
         <td class="dim">${t.stamm.name || "—"}</td>
         <td class="dim">${tr.date || "—"}</td>
-        <td><span class="pill pill--${tr.type === "buy" ? "pos" : "neg"}">${tr.type === "buy" ? "Buy" : "Sell"}</span></td>
         <td>${numFmt(tr.price)}</td>
         <td>${tr.shares != null ? numFmt(tr.shares, 0) : "—"}</td>
-        <td class="${signCls(pl_abs)}">${pl_abs != null ? (pl_abs >= 0 ? "+" : "") + numFmt(pl_abs) : "—"}</td>
+        <td class="dim">${avgCost != null ? numFmt(avgCost) : "—"}</td>
+        <td class="${signCls(pl_abs)}">${pl_abs != null ? signedNum(pl_abs, 0, "€") : "—"}</td>
       </tr>`).join("")}
       </tbody>
     </table>`;
