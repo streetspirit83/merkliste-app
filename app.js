@@ -888,8 +888,9 @@ const COLS_SELECT = [
 const COLS_BASE = [
   { key:"symbol", label:"Symbol", cls:"col-sym",
     cell: t => `<span class="sym-strong">${t.symbol}</span><span class="sym-sub">${t.exchange||""}</span>` },
-  { key:"price",          label:"Preis",   cell: t => numFmt(t.price) },
-  { key:"day_change_pct", label:"Day %",   cell: t => `<span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>` }
+  { key:"price",             label:"Preis",   cell: t => numFmt(t.price) },
+  { key:"currency_returned", label:"Währ.",   cell: t => `<span class="dim">${t.currency_returned || "—"}</span>` },
+  { key:"day_change_pct",    label:"Day %",   cell: t => `<span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>` }
 ];
 const COLS_PORTFOLIO_EXTRA = [
   { key:"performance_pct", label:"Perf %",   cell: t => `<span class="${signCls(t.performance_pct)}">${pctFmt(t.performance_pct)}</span>` },
@@ -1236,7 +1237,31 @@ function renderCards() {
     return;
   }
   const tpl = bucket === "portfolio" ? cardPortfolio : cardDefault;
-  host.innerHTML = rows.map(tpl).join("");
+  const selSet = new Set(Store.state.ui.selected);
+  const visIds = rows.map(r => r.id);
+  const selCount = visIds.filter(id => selSet.has(id)).length;
+  const allSel = selCount === visIds.length && visIds.length > 0;
+  const someSel = selCount > 0 && !allSel;
+  const headHtml = `<div class="card-list__head">
+    <label class="card-list__select">
+      <input type="checkbox" id="cards-select-all" ${allSel ? "checked" : ""} aria-label="Alle wählen / Auswahl aufheben" />
+      <span>${selCount > 0 ? `${selCount} gewählt — Auswahl aufheben` : "Alle wählen"}</span>
+    </label>
+  </div>`;
+  host.innerHTML = headHtml + rows.map(tpl).join("");
+  const selAll = $("#cards-select-all");
+  if (selAll) {
+    selAll.indeterminate = someSel;
+    selAll.addEventListener("click", e => {
+      e.stopPropagation();
+      const shouldSelectAll = selCount === 0;
+      let sel = Store.state.ui.selected.filter(id => !visIds.includes(id));
+      if (shouldSelectAll) sel = [...sel, ...visIds];
+      Store.patchUi({ selected: sel });
+      renderCards();
+      Render.bulkbar();
+    });
+  }
 
   host.querySelectorAll(".btn-info").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openInfo(e.currentTarget.dataset.id); }));
   host.querySelectorAll(".btn-edit").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openEdit(e.currentTarget.dataset.id); }));
@@ -2001,8 +2026,10 @@ async function runRefresh(refreshFn, list, label) {
     await API.fetchEurUsd();
     const res = await refreshFn(list);
     list.forEach(Calc.recompute);
+    Store.patchUi({ selected: [] });
     Store.save();
     Render.bucket();
+    Render.bulkbar();
     if (res.failed.length === 0) {
       toast(`${res.ok} ${label}`, "pos");
     } else if (res.ok === 0) {

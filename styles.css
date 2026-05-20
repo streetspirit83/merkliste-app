@@ -561,7 +561,18 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 
 /* ────── ticker cards ────── */
-.card-list { display: grid; gap: var(--s-2); }
+.card-list { display: grid; gap: var(--s-3); }
+.card-list__head {
+  display: flex; align-items: center; justify-content: flex-start;
+  padding: 4px 12px 4px 12px;
+  margin-bottom: -4px;
+}
+.card-list__select {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: var(--fs-l); color: var(--muted);
+  cursor: pointer; user-select: none;
+}
+.card-list__select input { accent-color: var(--accent); cursor: pointer; }
 .tcard {
   border: 1px solid var(--surface);
   border-radius: var(--r);
@@ -569,6 +580,12 @@ input, textarea, select { font: inherit; color: inherit; }
   background: var(--bg);
   position: relative;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
+  transition: box-shadow .15s ease, transform .15s ease;
+}
+.tcard:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,.14), 0 2px 4px rgba(0,0,0,.08);
+  transform: translateY(-1px);
 }
 .tcard.is-trig { border-color: var(--neg); }
 .tcard__sym { font-family: var(--font-sans); font-weight: var(--fw-h); font-size: var(--fs-h); letter-spacing: -0.01em; }
@@ -602,7 +619,7 @@ input, textarea, select { font: inherit; color: inherit; }
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--surface);
-  font-family: var(--font-mono); font-size: var(--fs-l);
+  font-family: var(--font-mono); font-size: 13px;
 }
 .tcard.has-select .tcard__price-sub { padding-left: 38px; }
 .tcard__sub-left  { display: flex; align-items: center; gap: 5px; }
