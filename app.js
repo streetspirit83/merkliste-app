@@ -3200,6 +3200,84 @@ function renderDashboard() {
 }
 
 /* ════════════════════════════════════════════════════
+   AUTO-REFRESH (F1)
+   ════════════════════════════════════════════════════ */
+
+function isMarketHours() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false;
+  const hour = +new Intl.DateTimeFormat("de", {
+    timeZone: "Europe/Berlin", hour: "numeric", hour12: false
+  }).format(now);
+  return hour >= 8 && hour < 23;
+}
+
+const AutoRefresh = {
+  INTERVAL_MS: 45 * 60 * 1000,
+  _timer:       null,
+  _tickTimer:   null,
+  _nextRun:     0,
+  _skippedHidden: false,
+
+  start() {
+    this._schedule();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && this._skippedHidden) {
+        this._skippedHidden = false;
+        clearTimeout(this._timer);
+        this._run();
+      }
+    });
+    // update countdown display every minute
+    this._tickTimer = setInterval(() => this._updateBadge(), 60_000);
+    this._updateBadge();
+  },
+
+  _schedule() {
+    clearTimeout(this._timer);
+    this._nextRun = Date.now() + this.INTERVAL_MS;
+    this._timer = setTimeout(() => this._run(), this.INTERVAL_MS);
+    this._updateBadge();
+  },
+
+  async _run() {
+    if (document.hidden) {
+      this._skippedHidden = true;
+      this._schedule();
+      return;
+    }
+    if (!isMarketHours()) {
+      this._schedule();
+      return;
+    }
+    const list = Store.state.tickers.filter(t =>
+      t.user.bucket === "portfolio" || t.user.bucket === "watchlist"
+    );
+    if (list.length) {
+      console.log("[auto-refresh] running for", list.length, "tickers");
+      await refreshList(list, `${list.length} auto-aktualisiert`);
+    }
+    this._schedule();
+  },
+
+  _updateBadge() {
+    const el = $("#auto-refresh-indicator");
+    if (!el) return;
+    if (!isMarketHours()) {
+      el.textContent = "";
+      el.title = "Auto-Refresh: außerhalb Marktzeit (Mo–Fr 08–23 Uhr MEZ)";
+      el.classList.remove("auto-refresh-badge--active");
+      return;
+    }
+    const mins = Math.max(1, Math.ceil((this._nextRun - Date.now()) / 60_000));
+    el.textContent = `${mins}m`;
+    el.title = `Auto-Refresh (Portfolio + Watchlist) in ${mins} Min.`;
+    el.classList.add("auto-refresh-badge--active");
+  }
+};
+
+/* ════════════════════════════════════════════════════
    SECTION 9 — INIT
    ════════════════════════════════════════════════════ */
 function init() {
@@ -3214,6 +3292,7 @@ function init() {
   Render.all();
   if (window.lucide) lucide.createIcons();
   _updateDarkIcon();
+  AutoRefresh.start();
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
