@@ -22,7 +22,7 @@
   --topbar-h: 56px; --subbar-h: 48px; --botbar-h: 64px; --bulkbar-h: 40px; --benchbar-h: 60px;
 }
 [data-theme="dark"] {
-   --bg:      #0f141c;
+   --bg:      #ef4444;
   --text:    #ecfeff;
   --surface: #1a2332;
   --border:  #2e3f56;
