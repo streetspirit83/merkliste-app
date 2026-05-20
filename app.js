@@ -2893,8 +2893,9 @@ function _dashHeatmap(rows) {
     const cells = MAS.map(ma => {
       const above = r.f[ma] != null && r.f.price != null ? r.f.price > r.f[ma] : null;
       const cls = above === null ? "dhm__cell--na" : above ? "dhm__cell--up" : "dhm__cell--dn";
-      const title = r.f[ma] != null ? r.f[ma].toFixed(2) : "—";
-      return `<td class="dhm__cell ${cls}" title="${title}"></td>`;
+      const title = r.f[ma] != null ? r.f[ma].toFixed(2) : "kein Datenabruf";
+      const inner = above === null ? "—" : "";
+      return `<td class="dhm__cell ${cls}" title="${title}">${inner}</td>`;
     }).join("");
     const bucketDot = `<span class="dhm__dot dhm__dot--${r.f.bucket}"></span>`;
     return `<tr><td class="dhm__sym">${bucketDot}${r.f.symbol}</td>${cells}</tr>`;
