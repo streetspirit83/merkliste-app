@@ -1825,13 +1825,32 @@ function saveEdit() {
   t.user.alerts = collectAlertsFromEditor();
   if (t.user.bucket === "portfolio") {
     t.user.trades = collectTradesFromEditor();
-    const buys  = (t.user.trades || []).filter(tr => tr.type === "buy"  && tr.price != null && tr.shares != null);
-    const sells = (t.user.trades || []).filter(tr => tr.type === "sell" && tr.shares != null);
-    const totalBuyShares  = buys.reduce((s, tr) => s + tr.shares, 0);
-    const totalSellShares = sells.reduce((s, tr) => s + tr.shares, 0);
-    if (totalBuyShares > 0) {
-      t.user.entry_price_manual = +(buys.reduce((s, tr) => s + tr.price * tr.shares, 0) / totalBuyShares).toFixed(4);
-      t.user.entry_shares = +(totalBuyShares - totalSellShares).toFixed(4);
+    // Chronological running cost basis — handles position close + reopen correctly
+    const sorted = [...(t.user.trades || [])].sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1; if (!b.date) return -1;
+      return a.date.localeCompare(b.date);
+    });
+    let runningShares = 0, runningCost = 0;
+    sorted.forEach(tr => {
+      if (tr.type === "buy" && tr.price != null && tr.shares != null) {
+        runningShares += tr.shares;
+        runningCost   += tr.price * tr.shares;
+      } else if (tr.type === "sell" && tr.shares != null) {
+        const sold = Math.min(tr.shares, runningShares);
+        if (runningShares > 0) {
+          runningCost   -= (runningCost / runningShares) * sold;
+          runningShares -= sold;
+        }
+        if (runningShares <= 0) { runningShares = 0; runningCost = 0; }
+      }
+    });
+    if (runningShares > 0) {
+      t.user.entry_price_manual = +(runningCost / runningShares).toFixed(4);
+      t.user.entry_shares = +runningShares.toFixed(4);
+    } else {
+      t.user.entry_price_manual = null;
+      t.user.entry_shares = 0;
     }
   }
   _autoInitTrade(t);
