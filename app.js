@@ -432,7 +432,7 @@ const API = {
           const indicators = Calc.indicatorsFromCloses(y.closes, r.ticker.quotes.price);
           Object.assign(r.ticker.quotes, indicators);
           // Yahoo closes are descending; reverse to ascending for sparkline
-          r.ticker.quotes.last7d = [...y.closes].reverse().slice(-7);
+          r.ticker.quotes.last7d = y.closes.slice(-7);
           recoveredHist.add(r.symbol);
         }
         r.ticker.quotes._source = "yahoo";
@@ -499,8 +499,9 @@ const API = {
       if (Array.isArray(j.closes) && j.closes.length > 0) {
         benchmarks[i].closes = j.closes.filter(n => n != null && !isNaN(+n)).map(Number);
         const c = benchmarks[i].closes;
-        benchmarks[i].week_change_pct  = c.length >= 5  ? +((c[0] - c[4])  / c[4]  * 100).toFixed(2) : null;
-        benchmarks[i].month_change_pct = c.length >= 21 ? +((c[0] - c[20]) / c[20] * 100).toFixed(2) : null;
+        const last = c[c.length - 1];
+        benchmarks[i].week_change_pct  = c.length >= 6  ? +((last - c[c.length - 6])  / c[c.length - 6]  * 100).toFixed(2) : null;
+        benchmarks[i].month_change_pct = c.length >= 22 ? +((last - c[c.length - 22]) / c[c.length - 22] * 100).toFixed(2) : null;
       }
       anyOk = true;
     });
@@ -3205,12 +3206,13 @@ function renderDashboard() {
 
 function isMarketHours() {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun, 6=Sat
-  if (day === 0 || day === 6) return false;
-  const hour = +new Intl.DateTimeFormat("de", {
-    timeZone: "Europe/Berlin", hour: "numeric", hour12: false
-  }).format(now);
-  return hour >= 8 && hour < 23;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Berlin", weekday: "short",
+    hour: "numeric", hour12: false, hourCycle: "h23"
+  }).formatToParts(now);
+  const weekday = parts.find(p => p.type === "weekday")?.value;
+  const hour    = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
+  return weekday !== "Sat" && weekday !== "Sun" && hour >= 8 && hour < 23;
 }
 
 const AutoRefresh = {

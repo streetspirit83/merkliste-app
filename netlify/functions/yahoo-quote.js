@@ -91,7 +91,7 @@ export default async (req) => {
     const ind  = result.indicators?.quote?.[0] || {};
 
     /* normalize quote fields */
-    const prev = meta.chartPreviousClose ?? meta.previousClose;
+    const prev = meta.regularMarketPreviousClose ?? meta.previousClose ?? meta.chartPreviousClose;
     const last = meta.regularMarketPrice;
     const pct  = (prev && last != null) ? ((last - prev) / prev) * 100 : null;
     const quote = {
