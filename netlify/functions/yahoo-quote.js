@@ -55,6 +55,31 @@ async function fetchYahoo(symbol, withHistory) {
   return { ok: false, error: lastErr || "Yahoo unreachable" };
 }
 
+/* Derive the true previous trading-day close from the daily closes array.
+   For range=1y, meta.chartPreviousClose is the chart baseline (1 year ago) — not useful.
+   Instead we use the timestamp array to detect whether today's bar is already in the
+   closes list (market closed) or not (market still open / pre-open). */
+function derivePrevClose(result, ind, withHistory) {
+  if (withHistory && Array.isArray(result.timestamp) && result.timestamp.length > 0) {
+    const rawCloses = ind.close || [];
+    const valid = rawCloses.map((v, i) => ({ v, ts: result.timestamp[i] }))
+                           .filter(x => x.v != null && !isNaN(+x.v));
+    if (valid.length >= 1) {
+      const lastBarDateStr = new Date(valid[valid.length - 1].ts * 1000).toDateString();
+      const todayDateStr   = new Date().toDateString();
+      if (lastBarDateStr === todayDateStr) {
+        /* today's bar is the last entry → prev close = second-to-last */
+        return valid.length >= 2 ? valid[valid.length - 2].v : null;
+      }
+      /* last bar is a previous trading day → it is the prev close */
+      return valid[valid.length - 1].v;
+    }
+  }
+  /* for range=1d, chartPreviousClose is correctly yesterday's close */
+  const meta = result.meta || {};
+  return meta.previousClose ?? meta.chartPreviousClose ?? null;
+}
+
 export default async (req) => {
   const url = new URL(req.url);
   const symbol = url.searchParams.get("symbol");
@@ -90,8 +115,7 @@ export default async (req) => {
     const meta = result.meta || {};
     const ind  = result.indicators?.quote?.[0] || {};
 
-    /* normalize quote fields */
-    const prev = meta.regularMarketPreviousClose ?? meta.previousClose ?? meta.chartPreviousClose;
+    const prev = derivePrevClose(result, ind, withHistory);
     const last = meta.regularMarketPrice;
     const pct  = (prev && last != null) ? ((last - prev) / prev) * 100 : null;
     const quote = {

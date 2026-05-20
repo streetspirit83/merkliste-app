@@ -3216,14 +3216,13 @@ function isMarketHours() {
 }
 
 const AutoRefresh = {
-  INTERVAL_MS: 45 * 60 * 1000,
+  INTERVAL_MS: 30 * 60 * 1000,
   _timer:       null,
   _tickTimer:   null,
   _nextRun:     0,
   _skippedHidden: false,
 
   start() {
-    this._schedule();
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && this._skippedHidden) {
         this._skippedHidden = false;
@@ -3231,9 +3230,8 @@ const AutoRefresh = {
         this._run();
       }
     });
-    // update countdown display every minute
     this._tickTimer = setInterval(() => this._updateBadge(), 60_000);
-    this._updateBadge();
+    this._run(); // run immediately on load, then every 30min
   },
 
   _schedule() {
