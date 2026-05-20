@@ -884,8 +884,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .dhm thead th:first-child { width: 80px; text-align: left; }
 .dhm__sym { font-family: var(--font-mono); font-size: 11px; padding: 3px 6px 3px 2px; white-space: nowrap; color: var(--text); width: 80px; }
 .dhm__cell { width: 44px; height: 18px; border: 1px solid var(--border); border-radius: 3px; text-align: center; font-size: 9px; color: var(--muted); }
-.dhm__cell--up { background: rgb(16, 185, 129); border-color: #a4dba4; }
-.dhm__cell--dn { background: rgb(239, 68, 68); border-color: #f7a1a1; }
+.dhm__cell--up { background: var(--pos); border-color: #a4dba4; }
+.dhm__cell--dn { background: var(--neg); border-color: #f7a1a1; }
 .dhm__cell--na { background: var(--surface); border-color: var(--border); }
 .dhm__dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .dhm__dot--portfolio { background: var(--accent); }
