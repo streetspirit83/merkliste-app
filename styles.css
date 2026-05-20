@@ -596,22 +596,34 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .card-list__select input { accent-color: var(--accent); cursor: pointer; }
 .tcard {
-  border: 1px solid var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--r);
   display: flex; flex-direction: column;
   background: var(--bg);
   position: relative;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
+  box-shadow: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.08);
   transition: box-shadow .15s ease, transform .15s ease;
 }
 .tcard:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,.14), 0 2px 4px rgba(0,0,0,.08);
-  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0,0,0,.18), 0 2px 5px rgba(0,0,0,.10);
+  transform: translateY(-2px);
 }
 .tcard.is-trig { border-color: var(--neg); }
-.tcard.is-trig--buy  { border-color: var(--pos); box-shadow: 0 0 0 1px rgba(53,133,53,.18), 0 4px 12px rgba(53,133,53,.10); }
-.tcard.is-trig--sell { border-color: var(--neg); box-shadow: 0 0 0 1px rgba(239,66,66,.18), 0 4px 12px rgba(239,66,66,.10); }
+.tcard.is-trig--buy  { border-color: var(--pos); box-shadow: 0 0 0 1px rgba(53,133,53,.22), 0 4px 14px rgba(53,133,53,.14); }
+.tcard.is-trig--sell { border-color: var(--neg); box-shadow: 0 0 0 1px rgba(239,66,66,.22), 0 4px 14px rgba(239,66,66,.14); }
+
+[data-theme="dark"] .tcard {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,.40), 0 1px 3px rgba(0,0,0,.28);
+}
+[data-theme="dark"] .tcard:hover {
+  box-shadow: 0 6px 22px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.35);
+  transform: translateY(-2px);
+}
+[data-theme="dark"] .tcard.is-trig--buy  { border-color: var(--pos); box-shadow: 0 0 0 1px rgba(63,185,80,.28), 0 4px 16px rgba(63,185,80,.18); }
+[data-theme="dark"] .tcard.is-trig--sell { border-color: var(--neg); box-shadow: 0 0 0 1px rgba(248,81,73,.28), 0 4px 16px rgba(248,81,73,.18); }
 .tcard__sym { font-family: var(--font-sans); font-weight: var(--fw-h); font-size: var(--fs-h); letter-spacing: -0.01em; }
 .tcard__name { font-family: var(--font-sans); font-size: var(--fs-l); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; flex: 1; min-width: 0; }
 .tcard__chip { font-family: var(--font-mono); font-weight: var(--fw-m); }
