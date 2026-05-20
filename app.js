@@ -818,15 +818,18 @@ const Render = {
   },
   viewMode() {
     const { view, activeView } = Store.state.ui;
-    const inScreener = activeView !== "portfolio";
-    const showBench  = inScreener && view === "table";
+    const inScreener  = activeView === "screener";
+    const inPortfolio = activeView === "portfolio";
+    const inDashboard = activeView === "dashboard";
+    const showBench   = inScreener && view === "table";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
-    $("#subbar").hidden         = !inScreener;
-    $("#pfbar").hidden          = inScreener;
-    $("#benchbar").hidden       = !showBench;
-    $("#view-screener").hidden  = !inScreener;
-    $("#view-portfolio").hidden = inScreener;
+    $("#subbar").hidden          = !inScreener;
+    $("#pfbar").hidden           = !inPortfolio;
+    $("#benchbar").hidden        = !showBench;
+    $("#view-screener").hidden   = !inScreener;
+    $("#view-portfolio").hidden  = !inPortfolio;
+    $("#view-dashboard").hidden  = !inDashboard;
     if (inScreener) {
       $("#screener-card-view") .hidden = view !== "cards";
       $("#screener-table-view").hidden = view !== "table";
@@ -2438,8 +2441,9 @@ function bindEvents() {
   });
 
   // side menu
-  $("#menu-nav-btn-screener") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
-  $("#menu-nav-btn-portfolio").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
+  $("#menu-nav-btn-screener")  .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
+  $("#menu-nav-btn-dashboard") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("dashboard"); });
+  $("#menu-nav-btn-portfolio") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
   document.addEventListener("click", e => {
     const tab = e.target.closest(".pf-tab");
     if (tab) switchPfTab(tab.dataset.pftab);
@@ -2562,6 +2566,8 @@ function switchView(view) {
     const activeTab = $(".pf-tab.is-active")?.dataset?.pftab || "perf";
     if (activeTab === "archive") renderArchiveView();
     else renderPortfolioPerf();
+  } else if (view === "dashboard") {
+    renderDashboard();
   }
 }
 
@@ -2824,7 +2830,295 @@ function squarify(items, box, out) {
 }
 
 /* ════════════════════════════════════════════════════
-   SECTION 8 — INIT
+   SECTION 8 — DASHBOARD
+   ════════════════════════════════════════════════════ */
+
+function _avg(arr) {
+  if (!arr.length) return null;
+  return arr.reduce((s, v) => s + v, 0) / arr.length;
+}
+
+function _dashRows() {
+  return Store.state.tickers
+    .map(t => ({ t, f: flat(t) }))
+    .filter(r => r.f.price != null);
+}
+
+function _pos52w(f) {
+  if (f.price != null && f.high_52w != null && f.low_52w != null && f.high_52w > f.low_52w)
+    return (f.price - f.low_52w) / (f.high_52w - f.low_52w) * 100;
+  return null;
+}
+
+/* I — Kanban KPIs */
+function _dashKanban(rows) {
+  const buckets = ["portfolio", "watchlist", "neutral"];
+  const labels  = { portfolio: "Portfolio", watchlist: "Watchlist", neutral: "Neutral" };
+  const cards = buckets.map(b => {
+    const br  = rows.filter(r => r.f.bucket === b);
+    const cnt = br.length;
+    const avgRsi = _avg(br.map(r => r.f.rsi).filter(v => v != null));
+    const avgChg = _avg(br.map(r => r.f.day_change_pct).filter(v => v != null));
+    const trig   = br.filter(r => r.f.alert_triggered).length;
+    const chgCls = avgChg == null ? "" : avgChg >= 0 ? "pos" : "neg";
+    const chgLbl = avgChg == null ? "—" : (avgChg >= 0 ? "+" : "") + avgChg.toFixed(1) + "%";
+    const trigHtml = trig > 0 ? `<span class="dash-kpi__trig">${trig} Alert${trig > 1 ? "s" : ""}</span>` : "";
+    return `<div class="dash-kpi">
+      <div class="dash-kpi__head">
+        <span class="dash-kpi__label">${labels[b]}</span>
+        <span class="dash-kpi__count">${cnt}</span>
+      </div>
+      <div class="dash-kpi__stats">
+        <span>Ø RSI <b>${avgRsi != null ? avgRsi.toFixed(0) : "—"}</b></span>
+        <span>Ø Tag <b class="${chgCls}">${chgLbl}</b></span>
+        ${trigHtml}
+      </div>
+    </div>`;
+  });
+  return `<div class="dash-section">
+    <div class="dash-section__title">Übersicht</div>
+    <div class="dash-kanban">${cards.join("")}</div>
+  </div>`;
+}
+
+/* H — MA-Alignment Heatmap */
+function _dashHeatmap(rows) {
+  const sorted = [...rows].sort((a, b) =>
+    a.f.bucket.localeCompare(b.f.bucket) || (a.f.symbol || "").localeCompare(b.f.symbol || "")
+  );
+  const MAS  = ["ma20", "ma50", "ma200"];
+  const LABS = ["MA20", "MA50", "MA200"];
+  const head = LABS.map(l => `<th class="dhm__th">${l}</th>`).join("");
+  const body = sorted.map(r => {
+    const cells = MAS.map(ma => {
+      const above = r.f[ma] != null && r.f.price != null ? r.f.price > r.f[ma] : null;
+      const cls = above === null ? "dhm__cell--na" : above ? "dhm__cell--up" : "dhm__cell--dn";
+      const title = r.f[ma] != null ? r.f[ma].toFixed(2) : "—";
+      return `<td class="dhm__cell ${cls}" title="${title}"></td>`;
+    }).join("");
+    const bucketDot = `<span class="dhm__dot dhm__dot--${r.f.bucket}"></span>`;
+    return `<tr><td class="dhm__sym">${bucketDot}${r.f.symbol}</td>${cells}</tr>`;
+  }).join("");
+  return `<div class="dash-section">
+    <div class="dash-section__title">MA-Alignment</div>
+    <div class="dhm-wrap">
+      <table class="dhm">
+        <thead><tr><th></th>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* K — 52W × RSI Scatter + Matrix */
+function _dashScatter(rows) {
+  const pts = rows.map(r => {
+    const p52 = _pos52w(r.f);
+    return r.f.rsi != null && p52 != null
+      ? { sym: r.f.symbol, rsi: r.f.rsi, p52, bucket: r.f.bucket }
+      : null;
+  }).filter(Boolean);
+
+  const W = 260, H = 170, PL = 32, PR = 8, PT = 8, PB = 28;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const BCOL = { portfolio: "var(--accent)", watchlist: "var(--pos)", neutral: "var(--muted)" };
+  const dots = pts.map(p => {
+    const cx = (PL + (p.rsi / 100) * iw).toFixed(1);
+    const cy = (PT + (1 - p.p52 / 100) * ih).toFixed(1);
+    const col = BCOL[p.bucket] || "var(--muted)";
+    return `<circle cx="${cx}" cy="${cy}" r="4" fill="${col}" opacity="0.75"><title>${p.sym} RSI=${p.rsi.toFixed(0)} 52W=${p.p52.toFixed(0)}%</title></circle>`;
+  }).join("");
+  const rsiZoneX1 = (PL + 0.30 * iw).toFixed(1);
+  const rsiZoneW  = (0.40 * iw).toFixed(1);
+  const axisLabels = [
+    `<text x="${(PL + 0.30*iw).toFixed(1)}" y="${H-PB+12}" font-size="9" fill="var(--muted)" text-anchor="middle">30</text>`,
+    `<text x="${(PL + 0.70*iw).toFixed(1)}" y="${H-PB+12}" font-size="9" fill="var(--muted)" text-anchor="middle">70</text>`,
+    `<text x="${(PL + 0.50*iw).toFixed(1)}" y="${H-PB+22}" font-size="9" fill="var(--muted)" text-anchor="middle">RSI →</text>`,
+    `<text x="${(PL-6).toFixed(1)}" y="${(PT + ih*0.25).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">75%</text>`,
+    `<text x="${(PL-6).toFixed(1)}" y="${(PT + ih*0.75).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">25%</text>`,
+    `<text x="${(PL-6).toFixed(1)}" y="${(PT + ih*0.50).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">50%</text>`,
+  ].join("");
+  const svgK2 = `<svg class="dash-scatter dash-k2" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    <rect x="${rsiZoneX1}" y="${PT}" width="${rsiZoneW}" height="${ih}" fill="var(--surface)" rx="2"/>
+    <line x1="${PL}" y1="${H-PB}" x2="${W-PR}" y2="${H-PB}" stroke="var(--line)" stroke-width="1"/>
+    <line x1="${PL}" y1="${PT}" x2="${PL}" y2="${H-PB}" stroke="var(--line)" stroke-width="1"/>
+    ${axisLabels}
+    ${dots}
+  </svg>`;
+
+  const RSI_BINS = [{lo:0,hi:30,label:"RSI<30"},{lo:30,hi:50,label:"30-50"},{lo:50,hi:70,label:"50-70"},{lo:70,hi:101,label:"RSI>70"}];
+  const POS_BINS = [{lo:75,hi:101,label:">75%"},{lo:50,hi:75,label:"50-75%"},{lo:25,hi:50,label:"25-50%"},{lo:0,hi:25,label:"<25%"}];
+  const matrix = POS_BINS.map(pb => RSI_BINS.map(rb =>
+    pts.filter(p => p.rsi >= rb.lo && p.rsi < rb.hi && p.p52 >= pb.lo && p.p52 < pb.hi)
+  ));
+  const maxN = Math.max(1, ...matrix.flat().map(c => c.length));
+  const matRows = POS_BINS.map((pb, ri) => `<tr>
+    <td class="dk3__label">${pb.label}</td>
+    ${RSI_BINS.map((rb, ci) => {
+      const cell = matrix[ri][ci];
+      const alpha = (cell.length / maxN * 0.65).toFixed(2);
+      const bg = cell.length ? `rgba(80,120,220,${alpha})` : "transparent";
+      const tip = cell.map(p => p.sym).join(", ") || "";
+      return `<td class="dk3__cell" style="background:${bg}" title="${tip}">${cell.length || ""}</td>`;
+    }).join("")}
+  </tr>`).join("");
+  const matrixHtml = `<table class="dash-k3" hidden>
+    <thead><tr><th></th>${RSI_BINS.map(b => `<th class="dk3__th">${b.label}</th>`).join("")}</tr></thead>
+    <tbody>${matRows}</tbody>
+  </table>`;
+
+  const legend = `<div class="dash-legend">
+    <span class="dash-legend__dot" style="background:var(--accent)"></span>Portfolio
+    <span class="dash-legend__dot" style="background:var(--pos)"></span>Watchlist
+    <span class="dash-legend__dot" style="background:var(--muted)"></span>Neutral
+  </div>`;
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__head">
+      <div class="dash-section__title">52W × RSI</div>
+      <div class="dtog">
+        <button class="dtog__btn is-active" data-k="k2">Scatter</button>
+        <button class="dtog__btn" data-k="k3">Matrix</button>
+      </div>
+    </div>
+    ${svgK2}
+    ${matrixHtml}
+    ${legend}
+    ${pts.length === 0 ? '<div class="dash-empty">Keine Daten (RSI + 52W fehlt)</div>' : ""}
+  </div>`;
+}
+
+/* L — Momentum 7T */
+function _dashMomentum(rows) {
+  const items = rows.map(r => {
+    const l7 = r.f.last7d;
+    if (!l7 || l7.length < 2 || !l7[0]) return null;
+    return { sym: r.f.symbol, pct: (l7[l7.length-1] - l7[0]) / Math.abs(l7[0]) * 100 };
+  }).filter(Boolean).sort((a, b) => b.pct - a.pct);
+
+  if (!items.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Momentum 7T</div><div class="dash-empty">Keine 7T-Daten</div></div>`;
+
+  const maxAbs = Math.max(...items.map(m => Math.abs(m.pct)), 0.01);
+  const bars = items.slice(0, 15).map(m => {
+    const w = Math.max(1, Math.abs(m.pct) / maxAbs * 100).toFixed(0);
+    const pos = m.pct >= 0;
+    return `<div class="dash-bar">
+      <div class="dash-bar__lbl">${m.sym}</div>
+      <div class="dash-bar__track"><div class="dash-bar__fill ${pos ? "dash-bar__fill--pos" : "dash-bar__fill--neg"}" style="width:${w}%"></div></div>
+      <div class="dash-bar__val ${pos ? "pos" : "neg"}">${pos ? "+" : ""}${m.pct.toFixed(1)}%</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Momentum 7T</div>
+    <div class="dash-bars">${bars}</div>
+  </div>`;
+}
+
+/* M — Volatilität 7T */
+function _dashVolatility(rows) {
+  const items = rows.map(r => {
+    const l7 = r.f.last7d;
+    if (!l7 || l7.length < 2) return null;
+    const rets = [];
+    for (let i = 1; i < l7.length; i++) if (l7[i-1]) rets.push((l7[i] - l7[i-1]) / l7[i-1] * 100);
+    if (!rets.length) return null;
+    const mean = _avg(rets);
+    const vol  = Math.sqrt(rets.reduce((s, v) => s + (v - mean) ** 2, 0) / rets.length);
+    return { sym: r.f.symbol, vol };
+  }).filter(Boolean).sort((a, b) => b.vol - a.vol);
+
+  if (!items.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Volatilität 7T</div><div class="dash-empty">Keine 7T-Daten</div></div>`;
+
+  const maxV = Math.max(...items.map(v => v.vol), 0.01);
+  const bars = items.slice(0, 15).map(v => {
+    const w = Math.max(1, v.vol / maxV * 100).toFixed(0);
+    return `<div class="dash-bar">
+      <div class="dash-bar__lbl">${v.sym}</div>
+      <div class="dash-bar__track"><div class="dash-bar__fill dash-bar__fill--vol" style="width:${w}%"></div></div>
+      <div class="dash-bar__val dim">${v.vol.toFixed(1)}%</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Volatilität 7T</div>
+    <div class="dash-bars">${bars}</div>
+  </div>`;
+}
+
+/* O — Opportunity Score */
+function _dashOpportunity(rows) {
+  const BCOL = { portfolio: "var(--accent)", watchlist: "var(--pos)", neutral: "var(--muted)" };
+  const scored = rows.map(r => {
+    const f = r.f;
+    let score = 0, n = 0;
+    if (f.rsi != null)       { score += (1 - f.rsi / 100) * 35; n++; }
+    const p52 = _pos52w(f);
+    if (p52 != null)         { score += (1 - p52 / 100) * 30; n++; }
+    if (f.last7d?.length >= 2 && f.last7d[0]) {
+      const mom = (f.last7d[f.last7d.length-1] - f.last7d[0]) / Math.abs(f.last7d[0]) * 100;
+      score += Math.max(-5, Math.min(5, mom)) * 0.5; n++;
+    }
+    if (n === 0) return null;
+    return { sym: f.symbol, score, bucket: f.bucket };
+  }).filter(Boolean).sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Opportunity Score</div><div class="dash-empty">Keine Daten</div></div>`;
+
+  const maxS = scored[0].score;
+  const bars = scored.slice(0, 10).map((s, i) => {
+    const w = Math.max(1, s.score / maxS * 100).toFixed(0);
+    const col = BCOL[s.bucket] || "var(--muted)";
+    return `<div class="dash-bar">
+      <div class="dash-bar__lbl">${i+1}. ${s.sym}</div>
+      <div class="dash-bar__track"><div class="dash-bar__fill" style="width:${w}%;background:${col}"></div></div>
+      <div class="dash-bar__val dim">${s.score.toFixed(0)}</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Opportunity Score</div>
+    <div class="dash-bars">${bars}</div>
+  </div>`;
+}
+
+function renderDashboard() {
+  const rows = _dashRows();
+  const el   = $("#dashboard-root");
+  if (!el) return;
+
+  el.innerHTML = `<div class="dash">
+    ${_dashKanban(rows)}
+    ${_dashHeatmap(rows)}
+    <div class="dash__grid2">
+      ${_dashScatter(rows)}
+      ${_dashMomentum(rows)}
+    </div>
+    <div class="dash__grid2">
+      ${_dashVolatility(rows)}
+      ${_dashOpportunity(rows)}
+    </div>
+  </div>`;
+
+  /* K2/K3 toggle */
+  el.querySelectorAll(".dtog .dtog__btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tog = btn.closest(".dtog");
+      tog.querySelectorAll(".dtog__btn").forEach(b => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const mode = btn.dataset.k;
+      const sec  = btn.closest(".dash-section");
+      sec.querySelector(".dash-k2").hidden = mode !== "k2";
+      sec.querySelector(".dash-k3").hidden = mode !== "k3";
+    });
+  });
+}
+
+/* ════════════════════════════════════════════════════
+   SECTION 9 — INIT
    ════════════════════════════════════════════════════ */
 function init() {
   console.log("[init] Merkliste boot");
