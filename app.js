@@ -720,8 +720,25 @@ const Calc = {
   recompute(t) {
     const sent = Calc.sentiment(t.quotes);
     const pos  = Calc.position(t);
-    const alerts = (t.user.alerts || []).map(a => ({ ...a, _trig: Calc.evalAlert(a, t.quotes) }));
+    const raw  = t.user.alerts || [];
+    /* A9: alerts with same `group` form AND-condition (all must trigger) */
+    const groupResults = new Map();
+    raw.forEach(a => {
+      if (!a.group) return;
+      const cur  = groupResults.get(a.group);
+      const trig = Calc.evalAlert(a, t.quotes);
+      groupResults.set(a.group, cur == null ? trig : cur && trig);
+    });
+    const alerts = raw.map(a => {
+      const _trig = a.group ? !!groupResults.get(a.group) : Calc.evalAlert(a, t.quotes);
+      return { ...a, _trig };
+    });
     const alert_triggered = alerts.some(a => a._trig);
+    /* A1: dominant direction of triggered alerts — sell wins over buy if both */
+    const trigDirs = alerts.filter(a => a._trig).map(alertDir);
+    const alert_triggered_dir = trigDirs.includes("sell") ? "sell"
+      : trigDirs.includes("buy") ? "buy"
+      : trigDirs.length ? "watch" : null;
     t.calculations = {
       trends: {
         sentiment: sent.sentiment,
@@ -730,6 +747,7 @@ const Calc = {
         trend_strength: sent.trend_strength,
         ...pos,
         alert_triggered,
+        alert_triggered_dir,
         calculated_at: Date.now()
       },
       signals: null, risk_management: null,
@@ -778,6 +796,7 @@ function flat(t) {
     performance_pct: c.performance_pct, performance_abs: c.performance_abs,
     position_value: c.position_value, position_pl_abs: c.position_pl_abs,
     alert_triggered: !!c.alert_triggered,
+    alert_triggered_dir: c.alert_triggered_dir || null,
     smart_alerts: (t.calculations && t.calculations.smart_alerts) || []
   };
 }
@@ -1023,6 +1042,7 @@ function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
   const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×" };
+  const q = t._raw && t._raw.quotes;
   const out = alerts.map(a => {
     let lbl, v;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
@@ -1035,8 +1055,12 @@ function alertChips(t, inline) {
           : a.type === "vol_spike" ? `${a.threshold}×`
           : numFmt(a.threshold);
     }
-    const side = a.nk_side ? ` <span class="pill pill--${a.nk_side === "buy" ? "pos" : "neg"}" style="font-size:10px">${a.nk_side === "buy" ? "B" : "S"}${a.nk_shares != null ? " " + numFmt(a.nk_shares, 0) : ""}</span>` : "";
-    return `<span class="alerts__chip ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}${side}</span>`;
+    const dir = alertDir(a);
+    const dirBadge = dir === "watch" ? "" : ` <span class="alerts__dir alerts__dir--${dir}">${dir === "buy" ? "B" : "S"}${a.nk_shares != null ? " " + numFmt(a.nk_shares, 0) : ""}</span>`;
+    const dist = q && !a._trig ? alertDistance(a, q) : { pct: null, near: false };
+    const distLbl = dist.pct != null ? ` <span class="alerts__dist ${dist.near ? "is-near" : ""}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)}%</span>` : "";
+    const grpBadge = a.group ? ` <span class="alerts__grp" title="AND-Gruppe">&</span>` : "";
+    return `<span class="alerts__chip alerts__chip--${dir} ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}${dirBadge}${distLbl}${grpBadge}</span>`;
   });
   return inline
     ? `<span class="alerts" style="display:inline-flex"><span class="tcard__label">Alerts</span>${out.join("")}</span>`
@@ -1169,7 +1193,7 @@ function _cardBody(t) {
 }
 
 function cardDefault(t) {
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
+  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig is-trig--" + (t.alert_triggered_dir || "sell") : ""}" data-id="${t.id}">
     ${selectChip(t)}
     <div class="tcard__hd">
       <span class="tcard__sym">${t.symbol}</span>
@@ -1201,7 +1225,7 @@ function cardPortfolio(t) {
     </span>
   ` : "";
 
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
+  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig is-trig--" + (t.alert_triggered_dir || "sell") : ""}" data-id="${t.id}">
     ${selectChip(t)}
     ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
     <div class="tcard__hd">
@@ -1465,6 +1489,54 @@ function openEdit(id) {
 }
 const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
 
+/* A1: default direction per alert type */
+const ALERT_DEFAULT_DIR = {
+  price_below: "buy",  price_above: "sell",
+  rsi_below:   "buy",  rsi_above:   "sell",
+  ma20_below:  "buy",  ma50_below:  "buy",  ma200_below: "buy",
+  ma_below_pct:"buy",  ma_above_pct:"sell",
+  macd_bullish:"buy",  macd_bearish:"sell",
+  reversal_up_short:"buy",  reversal_down_short:"sell",
+  reversal_up_long: "buy",  reversal_down_long: "sell",
+  vol_spike:   "watch"
+};
+function alertDir(a) {
+  return a.dir || a.nk_side || ALERT_DEFAULT_DIR[a.type] || "watch";
+}
+
+/* A6: distance to trigger — pct>0 = not yet, pct<0 = past trigger, near = within 5% */
+function alertDistance(a, q) {
+  if (!a || !q) return { pct: null, near: false };
+  const within = (p, lim) => Math.abs(p) <= lim;
+  const calc = (current, target, lim) => {
+    if (current == null || target == null || target === 0) return { pct: null, near: false };
+    const pct = ((current - target) / Math.abs(target)) * 100;
+    return { pct, near: within(pct, lim) };
+  };
+  switch (a.type) {
+    case "price_below": return calc(q.price, a.threshold, 5);
+    case "price_above": return calc(a.threshold, q.price, 5);
+    case "rsi_below":   return q.rsi != null && a.threshold != null
+      ? { pct: q.rsi - a.threshold, near: within(q.rsi - a.threshold, 5) } : { pct: null, near: false };
+    case "rsi_above":   return q.rsi != null && a.threshold != null
+      ? { pct: a.threshold - q.rsi, near: within(a.threshold - q.rsi, 5) } : { pct: null, near: false };
+    case "ma20_below":  return calc(q.price, q.ma20,  3);
+    case "ma50_below":  return calc(q.price, q.ma50,  3);
+    case "ma200_below": return calc(q.price, q.ma200, 3);
+    case "ma_below_pct": {
+      const mv = a.ma ? q[a.ma] : null;
+      if (mv == null || a.threshold == null) return { pct: null, near: false };
+      return calc(q.price, mv * (1 - a.threshold / 100), 5);
+    }
+    case "ma_above_pct": {
+      const mv = a.ma ? q[a.ma] : null;
+      if (mv == null || a.threshold == null) return { pct: null, near: false };
+      return calc(mv * (1 + a.threshold / 100), q.price, 5);
+    }
+    default: return { pct: null, near: false };
+  }
+}
+
 function renderAlertEditor(alerts, t) {
   const host = $("#edit-alerts-list");
   const MA_PCT = new Set(["ma_below_pct","ma_above_pct"]);
@@ -1476,7 +1548,10 @@ function renderAlertEditor(alerts, t) {
     const pholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : "Schwelle";
     const defVal  = a.threshold ?? (needsMa ? 20 : isVol ? 2 : "");
     const maVal   = a.ma || "ma50";
-    return `<div class="alert-row" data-idx="${i}">
+    const dir     = alertDir(a);
+    const prevGrp = i > 0 ? alerts[i - 1].group : null;
+    const linked  = i > 0 && a.group && prevGrp === a.group;
+    return `<div class="alert-row" data-idx="${i}" data-group="${a.group || ""}">
       <div class="alert-row__main">
         <select class="al-type">
           <option value="price_below"         ${a.type==="price_below"        ?"selected":""}>Preis ≤ (SL/Buy)</option>
@@ -1499,6 +1574,14 @@ function renderAlertEditor(alerts, t) {
           <option value="ma200" ${maVal==="ma200"?"selected":""}>MA200</option>
         </select>
         <input class="al-th" type="number" step="any" value="${defVal}" placeholder="${pholder}" ${noTh?"hidden":""} />
+        <select class="al-dir" title="Richtung Buy/Sell/Watch">
+          <option value="buy"   ${dir==="buy"  ?"selected":""}>Buy</option>
+          <option value="sell"  ${dir==="sell" ?"selected":""}>Sell</option>
+          <option value="watch" ${dir==="watch"?"selected":""}>Watch</option>
+        </select>
+        ${i > 0 ? `<label class="al-link" title="Mit vorherigem Alert per AND verknüpfen">
+          <input type="checkbox" class="al-and" ${linked ? "checked" : ""}/>&amp;
+        </label>` : `<span class="al-link al-link--placeholder"></span>`}
         <button class="al-del" aria-label="Alert löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
       </div>
     </div>`;
@@ -1517,22 +1600,41 @@ function renderAlertEditor(alerts, t) {
       if (needsMa && !thEl.value) thEl.value = 20;
       if (isVol   && !thEl.value) thEl.value = 2;
       row.querySelector(".al-ma").hidden = !needsMa;
+      /* auto-update direction default when type changes */
+      const dirSel = row.querySelector(".al-dir");
+      if (dirSel) dirSel.value = ALERT_DEFAULT_DIR[sel.value] || "watch";
     });
   });
   if (window.lucide) lucide.createIcons();
 }
 
 function collectAlertsFromEditor() {
-  return $$("#edit-alerts-list .alert-row").map(row => {
-    const type  = row.querySelector(".al-type").value;
-    const maEl  = row.querySelector(".al-ma");
-    const ma    = (maEl && !maEl.hidden) ? maEl.value : undefined;
-    const extra = ma !== undefined ? { ma } : {};
-    if (ALERT_NO_THRESHOLD.has(type)) return { type, threshold: null, ...extra };
+  const rows = $$("#edit-alerts-list .alert-row");
+  const out = [];
+  let currentGroup = null;
+  rows.forEach((row, i) => {
+    const type   = row.querySelector(".al-type").value;
+    const maEl   = row.querySelector(".al-ma");
+    const ma     = (maEl && !maEl.hidden) ? maEl.value : undefined;
+    const dir    = row.querySelector(".al-dir")?.value || ALERT_DEFAULT_DIR[type] || "watch";
+    const linked = i > 0 && row.querySelector(".al-and")?.checked;
+    let group;
+    if (linked) {
+      if (!currentGroup) currentGroup = `g_${Date.now()}_${i}`;
+      group = currentGroup;
+      /* propagate group back to previous row's alert if not yet grouped */
+      const prev = out[out.length - 1];
+      if (prev && !prev.group) prev.group = currentGroup;
+    } else {
+      currentGroup = null;
+    }
+    const base = { type, dir, ...(ma !== undefined ? { ma } : {}), ...(group ? { group } : {}) };
+    if (ALERT_NO_THRESHOLD.has(type)) { out.push({ ...base, threshold: null }); return; }
     const th = row.querySelector(".al-th").value;
-    if (th === "" || isNaN(+th)) return null;
-    return { type, threshold: +th, ...extra };
-  }).filter(Boolean);
+    if (th === "" || isNaN(+th)) return;
+    out.push({ ...base, threshold: +th });
+  });
+  return out;
 }
 
 function renderTradeEditor(trades) {
@@ -2098,43 +2200,62 @@ function openAlertsOverview() {
   const items = [];
   for (const t of tickers) {
     const trigs = (t.calculations && t.calculations.smart_alerts) || [];
-    for (const a of trigs) {
-      items.push({ t, a });
-    }
+    for (const a of trigs) items.push({ t, a, dir: alertDir(a), dist: alertDistance(a, t.quotes) });
   }
-  // sort: triggered first
-  items.sort((x, y) => (y.a._trig ? 1 : 0) - (x.a._trig ? 1 : 0));
+  /* sort: triggered → near → others (by absolute distance ascending) */
+  items.sort((x, y) => {
+    if (x.a._trig !== y.a._trig) return x.a._trig ? -1 : 1;
+    if (x.dist.near !== y.dist.near) return x.dist.near ? -1 : 1;
+    const dx = x.dist.pct == null ? Infinity : Math.abs(x.dist.pct);
+    const dy = y.dist.pct == null ? Infinity : Math.abs(y.dist.pct);
+    return dx - dy;
+  });
   const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig", vol_spike:"Volumen Spike ≥" };
   const body = $("#modal-alerts-body");
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
-  } else {
-    body.innerHTML = `<div class="alert-overview">${items.map(({t,a}) => {
-      let typeLabel, valLabel;
-      if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
-        const maName = (a.ma || "ma50").toUpperCase();
-        const sign   = a.type === "ma_above_pct" ? "+" : "−";
-        typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
-        const maVal = a.ma ? t.quotes[a.ma] : null;
-        const absPrice = maVal != null && a.threshold != null
-          ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
-          : null;
-        valLabel = absPrice != null ? numFmt(absPrice) : "—";
-      } else if (a.type === "vol_spike") {
-        typeLabel = lblMap[a.type] || a.type;
-        valLabel  = a.threshold != null ? `${a.threshold}×Ø` : "—";
-      } else {
-        typeLabel = lblMap[a.type] || a.type;
-        valLabel  = numFmt(a.threshold);
-      }
-      return `
-      <div class="alert-overview__item ${a._trig ? "is-trig" : ""}">
-        <span class="alert-overview__sym">${t.stamm.symbol}</span>
-        <span class="alert-overview__type">${typeLabel}</span>
-        <span class="alert-overview__val">${valLabel} ${a._trig ? "· ⚠ ausgelöst" : ""}</span>
-      </div>`;
-    }).join("")}</div>`;
+    openModal("#modal-alerts"); return;
   }
+  /* group by direction */
+  const groups = { buy: [], sell: [], watch: [] };
+  items.forEach(it => (groups[it.dir] || groups.watch).push(it));
+  const sectionLbl = { buy: "Buy-Signale", sell: "Sell-Signale", watch: "Beobachten" };
+  const renderItem = ({ t, a, dir, dist }) => {
+    let typeLabel, valLabel;
+    if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
+      const maName = (a.ma || "ma50").toUpperCase();
+      const sign   = a.type === "ma_above_pct" ? "+" : "−";
+      typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
+      const maVal = a.ma ? t.quotes[a.ma] : null;
+      const absPrice = maVal != null && a.threshold != null
+        ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
+        : null;
+      valLabel = absPrice != null ? numFmt(absPrice) : "—";
+    } else if (a.type === "vol_spike") {
+      typeLabel = lblMap[a.type] || a.type;
+      valLabel  = a.threshold != null ? `${a.threshold}×Ø` : "—";
+    } else {
+      typeLabel = lblMap[a.type] || a.type;
+      valLabel  = numFmt(a.threshold);
+    }
+    const status = a._trig
+      ? `<span class="alert-overview__status is-trig">⚠ ausgelöst</span>`
+      : dist.pct != null
+        ? `<span class="alert-overview__status ${dist.near ? "is-near" : "dim"}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)}%</span>`
+        : "";
+    const grp = a.group ? `<span class="alert-overview__grp" title="AND-Gruppe">&</span>` : "";
+    return `<div class="alert-overview__item alert-overview__item--${dir} ${a._trig ? "is-trig" : ""}">
+      <span class="alert-overview__sym">${t.stamm.symbol}${grp}</span>
+      <span class="alert-overview__type">${typeLabel}</span>
+      <span class="alert-overview__val">${valLabel}</span>
+      ${status}
+    </div>`;
+  };
+  body.innerHTML = ["buy","sell","watch"].filter(k => groups[k].length).map(k => `
+    <div class="alert-overview__section alert-overview__section--${k}">
+      <div class="alert-overview__head">${sectionLbl[k]} <span class="dim">· ${groups[k].length}</span></div>
+      ${groups[k].map(renderItem).join("")}
+    </div>`).join("");
   openModal("#modal-alerts");
 }
 
