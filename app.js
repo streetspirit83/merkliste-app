@@ -3217,47 +3217,64 @@ function isUSTicker(t) {
 
 const Progress = {
   _active: false,
-  _el: () => $("#auto-refresh-indicator"),
+  _activeText: "",
+  _badge:  () => $("#auto-refresh-indicator"),
+  _status: () => $("#td-status"),
   set(text, title) {
     this._active = true;
-    const el = this._el(); if (!el) return;
-    el.textContent = text || "";
-    el.title = title || "";
-    if (text) el.classList.add("auto-refresh-badge--active");
-    else      el.classList.remove("auto-refresh-badge--active");
+    this._activeText = text || "";
+    const b = this._badge();
+    if (b) {
+      b.textContent = text || "";
+      b.title = title || "";
+      if (text) b.classList.add("auto-refresh-badge--active");
+      else      b.classList.remove("auto-refresh-badge--active");
+    }
+    this._renderStatus();
   },
   clear() {
     this._active = false;
+    this._activeText = "";
     this.renderIdle();
   },
   renderIdle() {
-    if (this._active) return;
-    const el = this._el(); if (!el) return;
-    const dayUsed = TdRL._dayUsed;
-    const dayMax  = TdRL.DAY_MAX;
+    if (this._active) { this._renderStatus(); return; }
+    const b = this._badge();
+    if (b) {
+      const dayUsed = TdRL._dayUsed, dayMax = TdRL.DAY_MAX;
+      const nextMs  = TdRL.nextAvailableIn();
+      if (dayUsed >= dayMax)   { b.textContent = `TD ✕ ${dayUsed}/${dayMax}`; b.classList.add("auto-refresh-badge--active"); }
+      else if (nextMs > 0)     { b.textContent = `⏱${Math.ceil(nextMs/1000)}s`; b.classList.add("auto-refresh-badge--active"); }
+      else if (dayUsed > 0)    { b.textContent = `${dayUsed}/${dayMax}`; b.classList.add("auto-refresh-badge--active"); }
+      else                     { b.textContent = ""; b.classList.remove("auto-refresh-badge--active"); }
+      b.title = "";
+    }
+    this._renderStatus();
+  },
+  _renderStatus() {
+    const el = this._status(); if (!el) return;
+    const dayUsed = TdRL._dayUsed, dayMax = TdRL.DAY_MAX;
+    const minUsed = TdRL._used,    minMax = TdRL.MAX;
     const nextMs  = TdRL.nextAvailableIn();
-    if (dayUsed >= dayMax) {
-      el.textContent = `TD ✕ ${dayUsed}/${dayMax}`;
-      el.title = `TwelveData Tageslimit erreicht (${dayUsed}/${dayMax}) — Reset um UTC-Mitternacht`;
-      el.classList.add("auto-refresh-badge--active");
-      return;
-    }
-    if (nextMs > 0) {
-      const s = Math.ceil(nextMs / 1000);
-      el.textContent = `⏱${s}s · ${dayUsed}/${dayMax}`;
-      el.title = `Nächster TD-Slot in ${s}s · Tag ${dayUsed}/${dayMax}`;
-      el.classList.add("auto-refresh-badge--active");
-      return;
-    }
-    if (dayUsed > 0) {
-      el.textContent = `${dayUsed}/${dayMax}`;
-      el.title = `TD heute: ${dayUsed}/${dayMax} · aktuelle Minute: ${TdRL._used}/${TdRL.MAX} — Refresh bereit`;
-      el.classList.add("auto-refresh-badge--active");
+    el.classList.remove("td-status--active","td-status--warn","td-status--block");
+    let stateLabel, stateCls = "";
+    if (this._active && this._activeText) {
+      stateLabel = this._activeText;
+      stateCls = "td-status--active";
+    } else if (dayUsed >= dayMax) {
+      stateLabel = "Tageslimit erreicht — Reset 00:00 UTC";
+      stateCls = "td-status--block";
+    } else if (nextMs > 0) {
+      stateLabel = `nächster Slot in ${Math.ceil(nextMs/1000)}s`;
+      stateCls = "td-status--warn";
     } else {
-      el.textContent = "";
-      el.title = "";
-      el.classList.remove("auto-refresh-badge--active");
+      stateLabel = "bereit";
     }
+    if (stateCls) el.classList.add(stateCls);
+    el.innerHTML =
+      `<span class="td-status__item"><span class="td-status__label">Status:</span><span class="td-status__value">${stateLabel}</span></span>` +
+      `<span class="td-status__item"><span class="td-status__label">TD Tag:</span><span class="td-status__value">${dayUsed}/${dayMax}</span></span>` +
+      `<span class="td-status__item"><span class="td-status__label">Minute:</span><span class="td-status__value">${minUsed}/${minMax}</span></span>`;
   }
 };
 
@@ -3362,12 +3379,13 @@ async function smartRefresh(mode = "flat") {
   setRefreshLoading(true);
   const summary = { yahoo: { ok: 0, failed: 0 }, td: { ok: 0, failed: 0 } };
   try {
-    for (const bucket of ["portfolio", "watchlist"]) {
+    const BUCKET_LABEL = { portfolio: "Portfolio", watchlist: "Watchlist", neutral: "Neutral" };
+    for (const bucket of ["portfolio", "watchlist", "neutral"]) {
       const list = Store.state.tickers.filter(t => t.user.bucket === bucket);
       if (!list.length) continue;
       const yahoo = list.filter(t => !isUSTicker(t));
       const td    = list.filter(t =>  isUSTicker(t));
-      const bLabel = bucket === "portfolio" ? "Portfolio" : "Watchlist";
+      const bLabel = BUCKET_LABEL[bucket] || bucket;
 
       if (yahoo.length) {
         Progress.set(`${bLabel} Yahoo`, `${bLabel}: Yahoo-Fetch läuft`);

@@ -144,6 +144,25 @@ input, textarea, select { font: inherit; color: inherit; }
 .refresh-group { display: flex; align-items: center; gap: var(--s-1); }
 .auto-refresh-badge { font-size: 10px; font-family: var(--font-mono); color: var(--muted); min-width: 24px; }
 .auto-refresh-badge--active { color: var(--accent); }
+
+.td-status {
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--surface);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  min-height: 22px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.td-status__item { display: inline-flex; align-items: center; gap: 4px; }
+.td-status__label { opacity: 0.7; }
+.td-status__value { color: var(--text); }
+.td-status--active .td-status__value { color: var(--accent); }
+.td-status--warn   .td-status__value { color: #e0a800; }
+.td-status--block  .td-status__value { color: var(--neg); }
 .filter-trig {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 0 var(--s-2); height: 30px;
