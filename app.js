@@ -165,7 +165,6 @@ const API = {
   async tdQuoteBatch(tickers) {
     const key = API._key();
     if (!tickers.length) return {};
-    /* single ticker → cleaner single-call path with mic_code */
     if (tickers.length === 1) {
       const t = tickers[0];
       const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
@@ -176,45 +175,39 @@ const API = {
         return { [sym]: { _error: err.message } };
       }
     }
-    /* >1 → comma-separated symbol list */
     const symbolStrings = tickers.map(t => {
       const sym  = t.stamm.twelvedata_symbol || t.stamm.symbol;
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
       return exch ? `${sym}:${exch}` : sym;
     });
-    const url = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
-    url.searchParams.set("symbol", symbolStrings.join(","));
-    url.searchParams.set("apikey", key);
-    const res = await fetch(url.toString());
-    const json = await res.json();
-
-    /* top-level fatal error (no per-symbol wrapper) */
-    if (json.status === "error" && !json.symbol && Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
-      throw new Error(json.message || "TD batch error");
-    }
-
-    /* TD returns { "NVDA": {...}, "SAP:XETRA": {...}, ... }; build flexible lookup */
-    const out = {};
-    /* if response has top-level `symbol` field, it's actually a single quote */
-    if (json.symbol && json.close != null) {
-      out[json.symbol] = API._tdMapQuote(json);
-      /* also map under the SYMBOL:EXCH key in case our caller looks that way */
-      out[symbolStrings[0]] = out[json.symbol];
-      return out;
-    }
-    /* iterate response keys; tolerate per-symbol error objects */
-    for (const [k, v] of Object.entries(json)) {
-      if (!v || typeof v !== "object") continue;
-      const key1 = k;                  // "SAP:XETRA"
-      const key2 = k.split(":")[0];    // "SAP"
-      if (v.status === "error" || v.code) {
-        const errMsg = v.message || "TD error";
-        out[key1] = { _error: errMsg };
-        out[key2] = out[key1];
-      } else if (v.close != null || v.price != null) {
-        out[key1] = API._tdMapQuote(v);
-        out[key2] = out[key1];
+    const fetchChunk = async (chunkSyms) => {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
+      url.searchParams.set("symbol", chunkSyms.join(","));
+      url.searchParams.set("apikey", key);
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      if (json.status === "error" && !json.symbol && Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
+        throw new Error(json.message || "TD batch error");
       }
+      const out = {};
+      if (json.symbol && json.close != null) {
+        out[json.symbol] = API._tdMapQuote(json);
+        out[chunkSyms[0]] = out[json.symbol];
+        return out;
+      }
+      for (const [k, v] of Object.entries(json)) {
+        if (!v || typeof v !== "object") continue;
+        const k1 = k, k2 = k.split(":")[0];
+        if (v.status === "error" || v.code) { const e = v.message || "TD error"; out[k1] = { _error: e }; out[k2] = out[k1]; }
+        else if (v.close != null || v.price != null) { out[k1] = API._tdMapQuote(v); out[k2] = out[k1]; }
+      }
+      return out;
+    };
+    const out = {};
+    for (let i = 0; i < symbolStrings.length; i += TdRL.MAX) {
+      const chunk = symbolStrings.slice(i, i + TdRL.MAX);
+      await TdRL.throttle(chunk.length, `TD ${Math.min(i + TdRL.MAX, symbolStrings.length)}/${symbolStrings.length}`);
+      Object.assign(out, await fetchChunk(chunk));
     }
     return out;
   },
@@ -339,41 +332,39 @@ const API = {
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
       return exch ? `${sym}:${exch}` : sym;
     });
-    const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
-    url.searchParams.set("symbol", symbolStrings.join(","));
-    url.searchParams.set("interval", "1day");
-    url.searchParams.set("outputsize", String(outputsize));
-    url.searchParams.set("order", "ASC");
-    url.searchParams.set("apikey", key);
-    const res = await fetch(url.toString());
-    const json = await res.json();
-
-    /* fatal top-level error */
-    if (json.status === "error" && !json.values && !json.meta &&
-        Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
-      throw new Error(json.message || "TD time_series batch error");
-    }
-
-    const out = {};
-    /* single-symbol fallback: TD returns flat { meta:{symbol,...}, values:[...] } */
-    if (json.values && json.meta) {
-      const sym = json.meta.symbol;
-      out[sym] = json.values.map(v => +v.close).filter(n => !isNaN(n));
-      out[symbolStrings[0]] = out[sym];
-      return out;
-    }
-    /* multi-symbol: { "NVDA": {meta, values, status}, "SAP:XETRA": {...}, ... } */
-    for (const [k, v] of Object.entries(json)) {
-      if (!v || typeof v !== "object") continue;
-      const key1 = k;
-      const key2 = k.split(":")[0];
-      if (v.status === "error" || v.code) {
-        out[key1] = { _error: v.message || "TD error" };
-        out[key2] = out[key1];
-      } else if (Array.isArray(v.values)) {
-        out[key1] = v.values.map(x => +x.close).filter(n => !isNaN(n));
-        out[key2] = out[key1];
+    const fetchChunk = async (chunkSyms) => {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
+      url.searchParams.set("symbol", chunkSyms.join(","));
+      url.searchParams.set("interval", "1day");
+      url.searchParams.set("outputsize", String(outputsize));
+      url.searchParams.set("order", "ASC");
+      url.searchParams.set("apikey", key);
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      if (json.status === "error" && !json.values && !json.meta &&
+          Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
+        throw new Error(json.message || "TD time_series batch error");
       }
+      const out = {};
+      if (json.values && json.meta) {
+        const sym = json.meta.symbol;
+        out[sym] = json.values.map(v => +v.close).filter(n => !isNaN(n));
+        out[chunkSyms[0]] = out[sym];
+        return out;
+      }
+      for (const [k, v] of Object.entries(json)) {
+        if (!v || typeof v !== "object") continue;
+        const k1 = k, k2 = k.split(":")[0];
+        if (v.status === "error" || v.code) { out[k1] = { _error: v.message || "TD error" }; out[k2] = out[k1]; }
+        else if (Array.isArray(v.values)) { out[k1] = v.values.map(x => +x.close).filter(n => !isNaN(n)); out[k2] = out[k1]; }
+      }
+      return out;
+    };
+    const out = {};
+    for (let i = 0; i < symbolStrings.length; i += TdRL.MAX) {
+      const chunk = symbolStrings.slice(i, i + TdRL.MAX);
+      await TdRL.throttle(chunk.length, `TD-TS ${Math.min(i + TdRL.MAX, symbolStrings.length)}/${symbolStrings.length}`);
+      Object.assign(out, await fetchChunk(chunk));
     }
     return out;
   },
@@ -3274,30 +3265,32 @@ async function yahooRefreshDirect(tickers, withHistory) {
   return { ok, failed };
 }
 
-/* Throttled TD refresh respecting 8 credits/min free tier.
-   mode "flat" → 1 credit/ticker, chunks of 8
-   mode "full" → 2 credits/ticker, chunks of 4
-   60s pause between chunks (only if more chunks remain). */
+/* TwelveData free-tier rate limiter: 8 credits/min, 1 credit = 1 symbol.
+   Called automatically by tdQuoteBatch + tdTimeSeriesBatch — protects all call paths. */
+const TdRL = {
+  MAX: 8, WIN: 60_000, _used: 0, _winStart: 0,
+  async throttle(n, hint) {
+    const now = Date.now();
+    if (now - this._winStart >= this.WIN) { this._used = 0; this._winStart = now; }
+    if (this._used + n > this.MAX) {
+      const wait = this.WIN - (now - this._winStart) + 300;
+      await sleepWithCountdown(wait, hint || "TD");
+      this._used = 0; this._winStart = Date.now();
+    }
+    this._used += n;
+  }
+};
+
+/* TD refresh with context label — rate limiting handled inside API batch calls. */
 async function tdRefreshThrottled(tickers, mode, label) {
   if (!tickers.length) return { ok: 0, failed: [] };
-  const chunkSize = mode === "full" ? 4 : 8;
+  Progress.set(`${label} …`, `${label}: wird geladen`);
   const refreshFn = mode === "full" ? API.refreshFullMany : API.refreshMany;
-  let totalOk = 0; const allFailed = [];
-  for (let i = 0; i < tickers.length; i += chunkSize) {
-    const chunk = tickers.slice(i, i + chunkSize);
-    const done = i + chunk.length;
-    Progress.set(`${label} ${done}/${tickers.length}`, `${label}: ${done}/${tickers.length} (TwelveData)`);
-    const res = await refreshFn(chunk);
-    totalOk += res.ok || 0;
-    if (res.failed && res.failed.length) allFailed.push(...res.failed);
-    Calc.recomputeAll();
-    Store.save();
-    Render.all();
-    if (i + chunkSize < tickers.length) {
-      await sleepWithCountdown(60_000, `${label} ${done}/${tickers.length}`);
-    }
-  }
-  return { ok: totalOk, failed: allFailed };
+  const res = await refreshFn(tickers);
+  Calc.recomputeAll();
+  Store.save();
+  Render.all();
+  return res;
 }
 
 /* Smart refresh: split by data source, process Portfolio → Watchlist sequentially.
