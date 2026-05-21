@@ -634,6 +634,21 @@ input, textarea, select { font: inherit; color: inherit; }
 .tcard.is-trig--buy  { border-color: var(--pos); box-shadow: 0 0 0 1px rgba(53,133,53,.22), 0 4px 14px rgba(53,133,53,.14); }
 .tcard.is-trig--sell { border-color: var(--neg); box-shadow: 0 0 0 1px rgba(239,66,66,.22), 0 4px 14px rgba(239,66,66,.14); }
 
+@keyframes quote-flash {
+  0%   { box-shadow: 0 0 0 2px rgba(99,179,237,.0), 0 0 12px 4px rgba(99,179,237,.0); background-color: transparent; }
+  20%  { box-shadow: 0 0 0 2px rgba(99,179,237,.7), 0 0 18px 6px rgba(99,179,237,.28); background-color: rgba(99,179,237,.07); }
+  100% { box-shadow: 0 0 0 2px rgba(99,179,237,.0), 0 0 12px 4px rgba(99,179,237,.0); background-color: transparent; }
+}
+@keyframes quote-flash-row {
+  0%   { background-color: transparent; }
+  20%  { background-color: rgba(99,179,237,.10); }
+  100% { background-color: transparent; }
+}
+/* Cards: full glow */
+article.quote-updated { animation: quote-flash 1.2s ease-out forwards; }
+/* Table rows: bg flash on cells (box-shadow doesn't work on tr) */
+tr.quote-updated td   { animation: quote-flash-row 1.2s ease-out forwards; }
+
 [data-theme="dark"] .tcard {
   background: var(--surface);
   border-color: var(--border);

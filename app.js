@@ -265,9 +265,9 @@ const API = {
   /* Returns { ok: number, failed: [{symbol, error}] } so caller can report partials.
      Quick refresh: Quote only; falls back to Yahoo (no history) for failed entries. */
   async refreshMany(tickers) {
-    if (!tickers.length) return { ok: 0, failed: [] };
+    if (!tickers.length) return { ok: 0, failed: [], updatedIds: [] };
     const map = await API.tdQuoteBatch(tickers);
-    let ok = 0; const failed = [];
+    let ok = 0; const failed = []; const updatedIds = [];
     for (const t of tickers) {
       const sym  = t.stamm.twelvedata_symbol || t.stamm.symbol;
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
@@ -276,7 +276,7 @@ const API = {
       if (entry._error)      { failed.push({ symbol: sym, error: entry._error,    ticker: t }); continue; }
       t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
       Object.assign(t.quotes, entry);
-      ok++;
+      ok++; updatedIds.push(t.id);
     }
     /* Yahoo fallback (quote only) for failed TD entries */
     if (failed.length) {
@@ -292,9 +292,9 @@ const API = {
         }
       }
       const remaining = failed.filter(f => !recovered.has(f.symbol));
-      return { ok: ok + recovered.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })) };
+      return { ok: ok + recovered.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })), updatedIds };
     }
-    return { ok, failed: [] };
+    return { ok, failed: [], updatedIds };
   },
 
   /* ───── time_series for MA/RSI calculation (Full-Refresh path) ───── */
@@ -371,13 +371,13 @@ const API = {
 
   /* Full refresh = quote + time_series → computes MAs/RSI from closes */
   async refreshFullMany(tickers) {
-    if (!tickers.length) return { ok: 0, failed: [] };
+    if (!tickers.length) return { ok: 0, failed: [], updatedIds: [] };
     /* run both in parallel */
     const [qMap, tsMap] = await Promise.all([
       API.tdQuoteBatch(tickers),
       API.tdTimeSeriesBatch(tickers, 210)
     ]);
-    let ok = 0; const failed = [];
+    let ok = 0; const failed = []; const updatedIds = [];
     for (const t of tickers) {
       const sym  = t.stamm.twelvedata_symbol || t.stamm.symbol;
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
@@ -402,9 +402,9 @@ const API = {
         failed.push({ symbol: sym, error: err, ticker: t, needsHist: true });
       } else if (!tsOk) {
         failed.push({ symbol: sym, error: "Historie fehlt: " + ((tsEntry && tsEntry._error) || "leer"), ticker: t, needsHist: true });
-        ok++;  /* quote at least worked */
+        ok++; updatedIds.push(t.id);
       } else {
-        ok++;
+        ok++; updatedIds.push(t.id);
       }
     }
 
@@ -431,9 +431,9 @@ const API = {
       }
       /* drop fully-recovered from failed; bump ok by count of recovered-fully */
       const remaining = failed.filter(f => !(recoveredFully.has(f.symbol) || recoveredHist.has(f.symbol)));
-      return { ok: ok + recoveredFully.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })) };
+      return { ok: ok + recoveredFully.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })), updatedIds };
     }
-    return { ok, failed: failed.map(f => ({ symbol: f.symbol, error: f.error })) };
+    return { ok, failed: failed.map(f => ({ symbol: f.symbol, error: f.error })), updatedIds };
   },
 
   /* ═══════ Yahoo Finance fallback via Netlify Function ═══════ */
@@ -807,6 +807,14 @@ const Render = {
     this.bulkbar();
     this.filterBtn();
     renderBenchBar();
+    const av = Store.state.ui.activeView;
+    if (av === "portfolio") {
+      const activeTab = $(".pf-tab.is-active")?.dataset?.pftab || "perf";
+      if (activeTab === "archive") renderArchiveView();
+      else renderPortfolioPerf();
+    } else if (av === "dashboard") {
+      renderDashboard();
+    }
   },
   viewMode() {
     const { view, activeView } = Store.state.ui;
@@ -3291,17 +3299,29 @@ function sleepWithCountdown(ms, prefix) {
   });
 }
 
-/* Yahoo-direct refresh — bypasses TD entirely so non-US tickers don't burn TD credits. */
+/* Flash a glow on all DOM elements (card + table row) for the given ticker IDs. */
+function flashUpdated(ids) {
+  if (!ids.length) return;
+  const idSet = new Set(ids);
+  document.querySelectorAll("[data-id]").forEach(el => {
+    if (!idSet.has(el.dataset.id)) return;
+    el.classList.remove("quote-updated");
+    void el.offsetWidth; // force reflow to restart animation
+    el.classList.add("quote-updated");
+  });
+}
+
+/* Yahoo-direct refresh — bypasses TD entirely so non-US tickers don't burn TD credits.
+   Renders immediately after each ticker resolves for responsive feedback. */
 async function yahooRefreshDirect(tickers, withHistory) {
   if (!tickers.length) return { ok: 0, failed: [] };
-  const map = await API.yahooBatch(tickers, withHistory);
-  let ok = 0; const failed = [];
-  for (const t of tickers) {
+  let ok = 0; const failed = []; const updatedIds = [];
+  await Promise.allSettled(tickers.map(async t => {
     const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
-    const y = map[sym];
+    const y = await API.yahooQuote(t, withHistory);
     if (!y || y._error) {
       failed.push({ symbol: sym, error: (y && y._error) || "Kein Yahoo-Ergebnis" });
-      continue;
+      return;
     }
     t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
     Object.assign(t.quotes, y.quote || {});
@@ -3312,7 +3332,12 @@ async function yahooRefreshDirect(tickers, withHistory) {
     }
     t.quotes._source = "yahoo";
     ok++;
-  }
+    updatedIds.push(t.id);
+    Calc.recompute(t);
+    Render.all();
+    flashUpdated([t.id]);
+  }));
+  Store.save();
   return { ok, failed };
 }
 
@@ -3370,6 +3395,7 @@ async function tdRefreshThrottled(tickers, mode, label) {
   Calc.recomputeAll();
   Store.save();
   Render.all();
+  if (res.updatedIds?.length) flashUpdated(res.updatedIds);
   return res;
 }
 
@@ -3392,9 +3418,7 @@ async function smartRefresh(mode = "flat") {
         const res = await yahooRefreshDirect(yahoo, mode === "full");
         summary.yahoo.ok += res.ok || 0;
         summary.yahoo.failed += (res.failed || []).length;
-        Calc.recomputeAll();
-        Store.save();
-        Render.all();
+        // yahooRefreshDirect already recomputes + renders per ticker
       }
       if (td.length) {
         const res = await tdRefreshThrottled(td, mode, `${bLabel} TD`);
