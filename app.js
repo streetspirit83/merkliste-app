@@ -3216,15 +3216,49 @@ function isUSTicker(t) {
 }
 
 const Progress = {
+  _active: false,
   _el: () => $("#auto-refresh-indicator"),
   set(text, title) {
+    this._active = true;
     const el = this._el(); if (!el) return;
     el.textContent = text || "";
     el.title = title || "";
     if (text) el.classList.add("auto-refresh-badge--active");
     else      el.classList.remove("auto-refresh-badge--active");
   },
-  clear() { this.set("", ""); }
+  clear() {
+    this._active = false;
+    this.renderIdle();
+  },
+  renderIdle() {
+    if (this._active) return;
+    const el = this._el(); if (!el) return;
+    const dayUsed = TdRL._dayUsed;
+    const dayMax  = TdRL.DAY_MAX;
+    const nextMs  = TdRL.nextAvailableIn();
+    if (dayUsed >= dayMax) {
+      el.textContent = `TD ✕ ${dayUsed}/${dayMax}`;
+      el.title = `TwelveData Tageslimit erreicht (${dayUsed}/${dayMax}) — Reset um UTC-Mitternacht`;
+      el.classList.add("auto-refresh-badge--active");
+      return;
+    }
+    if (nextMs > 0) {
+      const s = Math.ceil(nextMs / 1000);
+      el.textContent = `⏱${s}s · ${dayUsed}/${dayMax}`;
+      el.title = `Nächster TD-Slot in ${s}s · Tag ${dayUsed}/${dayMax}`;
+      el.classList.add("auto-refresh-badge--active");
+      return;
+    }
+    if (dayUsed > 0) {
+      el.textContent = `${dayUsed}/${dayMax}`;
+      el.title = `TD heute: ${dayUsed}/${dayMax} · aktuelle Minute: ${TdRL._used}/${TdRL.MAX} — Refresh bereit`;
+      el.classList.add("auto-refresh-badge--active");
+    } else {
+      el.textContent = "";
+      el.title = "";
+      el.classList.remove("auto-refresh-badge--active");
+    }
+  }
 };
 
 function sleepWithCountdown(ms, prefix) {
@@ -3268,8 +3302,35 @@ async function yahooRefreshDirect(tickers, withHistory) {
 /* TwelveData free-tier rate limiter: 8 credits/min, 1 credit = 1 symbol.
    Called automatically by tdQuoteBatch + tdTimeSeriesBatch — protects all call paths. */
 const TdRL = {
-  MAX: 8, WIN: 60_000, _used: 0, _winStart: 0,
+  MAX: 8, WIN: 60_000, DAY_MAX: 800,
+  _used: 0, _winStart: 0,
+  _dayUsed: 0, _dayKey: "",
+  STORAGE_KEY: "td_rl_v1",
+
+  _todayKey() { return new Date().toISOString().slice(0, 10); },
+  _rollDay() {
+    const today = this._todayKey();
+    if (today !== this._dayKey) { this._dayKey = today; this._dayUsed = 0; }
+  },
+  loadFromStorage() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(this.STORAGE_KEY) || "{}");
+      const today = this._todayKey();
+      this._dayKey  = today;
+      this._dayUsed = saved.day === today ? (+saved.used || 0) : 0;
+    } catch { this._dayKey = this._todayKey(); this._dayUsed = 0; }
+  },
+  _persist() {
+    try { localStorage.setItem(this.STORAGE_KEY, JSON.stringify({ day: this._dayKey, used: this._dayUsed })); } catch {}
+  },
+  nextAvailableIn() {
+    const now = Date.now();
+    if (now - this._winStart >= this.WIN) return 0;
+    if (this._used < this.MAX) return 0;
+    return this.WIN - (now - this._winStart);
+  },
   async throttle(n, hint) {
+    this._rollDay();
     const now = Date.now();
     if (now - this._winStart >= this.WIN) { this._used = 0; this._winStart = now; }
     if (this._used + n > this.MAX) {
@@ -3278,6 +3339,8 @@ const TdRL = {
       this._used = 0; this._winStart = Date.now();
     }
     this._used += n;
+    this._dayUsed += n;
+    this._persist();
   }
 };
 
@@ -3350,6 +3413,9 @@ function init() {
   Render.all();
   if (window.lucide) lucide.createIcons();
   _updateDarkIcon();
+  TdRL.loadFromStorage();
+  setInterval(() => Progress.renderIdle(), 1000);
+  Progress.renderIdle();
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
