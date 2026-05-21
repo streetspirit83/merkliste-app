@@ -2433,8 +2433,8 @@ function bindEvents() {
   // sub bar
   $("#btn-element-card-view") .addEventListener("click", () => { Store.patchUi({ view: "cards" }); Render.viewMode(); });
   $("#btn-element-table-view").addEventListener("click", () => { Store.patchUi({ view: "table" }); Render.viewMode(); });
-  $("#btn-element-refresh")     .addEventListener("click", () => refreshBucket(Store.state.ui.bucket));
-  $("#btn-element-fullrefresh") .addEventListener("click", () => refreshListFull(Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket), `${Store.state.ui.bucket} vollständig aktualisiert`));
+  $("#btn-element-refresh")     .addEventListener("click", () => smartRefresh("flat"));
+  $("#btn-element-fullrefresh") .addEventListener("click", () => smartRefresh("full"));
   $("#btn-filter-trig")         .addEventListener("click", () => {
     Store.patchUi({ triggeredOnly: !Store.state.ui.triggeredOnly });
     Render.filterBtn(); Render.bucket();
@@ -3215,67 +3215,132 @@ function isMarketHours() {
   return weekday !== "Sat" && weekday !== "Sun" && hour >= 8 && hour < 23;
 }
 
-const AutoRefresh = {
-  INTERVAL_MS: 30 * 60 * 1000,
-  _timer:       null,
-  _tickTimer:   null,
-  _nextRun:     0,
-  _skippedHidden: false,
+const US_MICS = new Set(["XNYS", "XNAS", "XNGS", "XNCM", "XNMS", "ARCX", "BATS"]);
+function isUSTicker(t) {
+  const mic  = (t.stamm.twelvedata_mic_code || "").toUpperCase();
+  const exch = (t.stamm.twelvedata_exchange || t.stamm.exchange || "").toUpperCase();
+  if (US_MICS.has(mic)) return true;
+  if (exch.includes("NASDAQ") || exch.includes("NYSE") || exch.includes("ARCA")) return true;
+  return false;
+}
 
-  start() {
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && this._skippedHidden) {
-        this._skippedHidden = false;
-        clearTimeout(this._timer);
-        this._run();
-      }
-    });
-    this._tickTimer = setInterval(() => this._updateBadge(), 60_000);
-    this._run(); // run immediately on load, then every 30min
+const Progress = {
+  _el: () => $("#auto-refresh-indicator"),
+  set(text, title) {
+    const el = this._el(); if (!el) return;
+    el.textContent = text || "";
+    el.title = title || "";
+    if (text) el.classList.add("auto-refresh-badge--active");
+    else      el.classList.remove("auto-refresh-badge--active");
   },
-
-  _schedule() {
-    clearTimeout(this._timer);
-    this._nextRun = Date.now() + this.INTERVAL_MS;
-    this._timer = setTimeout(() => this._run(), this.INTERVAL_MS);
-    this._updateBadge();
-  },
-
-  async _run() {
-    if (document.hidden) {
-      this._skippedHidden = true;
-      this._schedule();
-      return;
-    }
-    if (!isMarketHours()) {
-      this._schedule();
-      return;
-    }
-    const list = Store.state.tickers.filter(t =>
-      t.user.bucket === "portfolio" || t.user.bucket === "watchlist"
-    );
-    if (list.length) {
-      console.log("[auto-refresh] running for", list.length, "tickers");
-      await refreshList(list, `${list.length} auto-aktualisiert`);
-    }
-    this._schedule();
-  },
-
-  _updateBadge() {
-    const el = $("#auto-refresh-indicator");
-    if (!el) return;
-    if (!isMarketHours()) {
-      el.textContent = "";
-      el.title = "Auto-Refresh: außerhalb Marktzeit (Mo–Fr 08–23 Uhr MEZ)";
-      el.classList.remove("auto-refresh-badge--active");
-      return;
-    }
-    const mins = Math.max(1, Math.ceil((this._nextRun - Date.now()) / 60_000));
-    el.textContent = `${mins}m`;
-    el.title = `Auto-Refresh (Portfolio + Watchlist) in ${mins} Min.`;
-    el.classList.add("auto-refresh-badge--active");
-  }
+  clear() { this.set("", ""); }
 };
+
+function sleepWithCountdown(ms, prefix) {
+  return new Promise(resolve => {
+    const end = Date.now() + ms;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+      Progress.set(`${prefix} ⏱${remaining}s`, `Rate-Limit Pause: ${remaining}s`);
+      if (Date.now() >= end) { resolve(); return; }
+      setTimeout(tick, 1000);
+    };
+    tick();
+  });
+}
+
+/* Yahoo-direct refresh — bypasses TD entirely so non-US tickers don't burn TD credits. */
+async function yahooRefreshDirect(tickers, withHistory) {
+  if (!tickers.length) return { ok: 0, failed: [] };
+  const map = await API.yahooBatch(tickers, withHistory);
+  let ok = 0; const failed = [];
+  for (const t of tickers) {
+    const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
+    const y = map[sym];
+    if (!y || y._error) {
+      failed.push({ symbol: sym, error: (y && y._error) || "Kein Yahoo-Ergebnis" });
+      continue;
+    }
+    t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
+    Object.assign(t.quotes, y.quote || {});
+    if (withHistory && Array.isArray(y.closes) && y.closes.length) {
+      const indicators = Calc.indicatorsFromCloses(y.closes, t.quotes.price);
+      Object.assign(t.quotes, indicators);
+      t.quotes.last7d = y.closes.slice(-7);
+    }
+    t.quotes._source = "yahoo";
+    ok++;
+  }
+  return { ok, failed };
+}
+
+/* Throttled TD refresh respecting 8 credits/min free tier.
+   mode "flat" → 1 credit/ticker, chunks of 8
+   mode "full" → 2 credits/ticker, chunks of 4
+   60s pause between chunks (only if more chunks remain). */
+async function tdRefreshThrottled(tickers, mode, label) {
+  if (!tickers.length) return { ok: 0, failed: [] };
+  const chunkSize = mode === "full" ? 4 : 8;
+  const refreshFn = mode === "full" ? API.refreshFullMany : API.refreshMany;
+  let totalOk = 0; const allFailed = [];
+  for (let i = 0; i < tickers.length; i += chunkSize) {
+    const chunk = tickers.slice(i, i + chunkSize);
+    const done = i + chunk.length;
+    Progress.set(`${label} ${done}/${tickers.length}`, `${label}: ${done}/${tickers.length} (TwelveData)`);
+    const res = await refreshFn(chunk);
+    totalOk += res.ok || 0;
+    if (res.failed && res.failed.length) allFailed.push(...res.failed);
+    Calc.recomputeAll();
+    Store.save();
+    Render.all();
+    if (i + chunkSize < tickers.length) {
+      await sleepWithCountdown(60_000, `${label} ${done}/${tickers.length}`);
+    }
+  }
+  return { ok: totalOk, failed: allFailed };
+}
+
+/* Smart refresh: split by data source, process Portfolio → Watchlist sequentially.
+   Yahoo always flat (parallel). TD throttled to free-tier limits. */
+async function smartRefresh(mode = "flat") {
+  setRefreshLoading(true);
+  const summary = { yahoo: { ok: 0, failed: 0 }, td: { ok: 0, failed: 0 } };
+  try {
+    for (const bucket of ["portfolio", "watchlist"]) {
+      const list = Store.state.tickers.filter(t => t.user.bucket === bucket);
+      if (!list.length) continue;
+      const yahoo = list.filter(t => !isUSTicker(t));
+      const td    = list.filter(t =>  isUSTicker(t));
+      const bLabel = bucket === "portfolio" ? "Portfolio" : "Watchlist";
+
+      if (yahoo.length) {
+        Progress.set(`${bLabel} Yahoo`, `${bLabel}: Yahoo-Fetch läuft`);
+        const res = await yahooRefreshDirect(yahoo, mode === "full");
+        summary.yahoo.ok += res.ok || 0;
+        summary.yahoo.failed += (res.failed || []).length;
+        Calc.recomputeAll();
+        Store.save();
+        Render.all();
+      }
+      if (td.length) {
+        const res = await tdRefreshThrottled(td, mode, `${bLabel} TD`);
+        summary.td.ok += res.ok || 0;
+        summary.td.failed += (res.failed || []).length;
+      }
+    }
+    const totalOk = summary.yahoo.ok + summary.td.ok;
+    const totalFail = summary.yahoo.failed + summary.td.failed;
+    if (totalOk && !totalFail)      toast(`${totalOk} aktualisiert`, "pos");
+    else if (totalOk && totalFail)  toast(`${totalOk} ok, ${totalFail} Fehler`, "neg");
+    else if (totalFail)             toast(`Refresh fehlgeschlagen (${totalFail})`, "neg");
+  } catch (err) {
+    toast("Refresh-Fehler: " + err.message, "neg");
+    console.warn("[smartRefresh] fatal", err);
+  } finally {
+    Progress.clear();
+    setRefreshLoading(false);
+  }
+}
 
 /* ════════════════════════════════════════════════════
    SECTION 9 — INIT
@@ -3292,9 +3357,10 @@ function init() {
   Render.all();
   if (window.lucide) lucide.createIcons();
   _updateDarkIcon();
-  AutoRefresh.start();
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
+  /* Initial flat refresh on page load (Portfolio → Watchlist, Yahoo + throttled TD) */
+  smartRefresh("flat");
 }
 document.addEventListener("DOMContentLoaded", init);
