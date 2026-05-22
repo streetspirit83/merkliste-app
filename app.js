@@ -864,9 +864,8 @@ const Render = {
     /* refresh-btn tooltips reflect what will actually happen */
     const rb  = $("#bulk-refresh");
     const rbf = $("#bulk-refresh-full");
-    const scope = n > 0 ? `${n} ausgewählte` : `Bucket "${cur}"`;
-    if (rb)  rb.title  = `Quick: ${scope} — nur Kurs`;
-    if (rbf) rbf.title = `Full: ${scope} — Kurs + Historie (MA/RSI)`;
+    if (rb)  { rb.title  = `Quick: ${n} ausgewählte — nur Kurs`;             rb.disabled  = n === 0; }
+    if (rbf) { rbf.title = `Full: ${n} ausgewählte — Kurs + Historie (MA/RSI)`; rbf.disabled = n === 0; }
   },
   filterBtn() {
     $("#btn-filter-trig").setAttribute("aria-pressed", !!Store.state.ui.triggeredOnly);
@@ -2160,52 +2159,20 @@ async function refreshOne(id) {
     toast(`${t.stamm.symbol} aktualisiert`, "pos");
   } catch (err) { toast("Refresh fehlgeschlagen: " + err.message, "neg"); }
 }
-/* Generic refresh runner: takes a refreshFn returning { ok, failed } */
-async function runRefresh(refreshFn, list, label) {
-  if (!list.length) { toast("Nichts zu aktualisieren", "neg"); return; }
-  setRefreshLoading(true);
-  try {
-    await API.fetchEurUsd();
-    const res = await refreshFn(list);
-    list.forEach(Calc.recompute);
-    Store.patchUi({ selected: [] });
-    Store.save();
-    Render.bucket();
-    Render.bulkbar();
-    if (res.failed.length === 0) {
-      toast(`${res.ok} ${label}`, "pos");
-    } else if (res.ok === 0) {
-      const firstErr = res.failed[0];
-      toast(`Fehlgeschlagen: ${firstErr.symbol} — ${firstErr.error}`, "neg");
-      console.warn("[refresh] all failed", res.failed);
-    } else {
-      toast(`${res.ok} ${label}, ${res.failed.length} fehlgeschlagen (${res.failed.slice(0,3).map(f=>f.symbol).join(", ")}${res.failed.length>3?"…":""})`, "neg");
-      console.warn("[refresh] partial", res.failed);
-    }
-  } catch (err) {
-    toast("Refresh fehlgeschlagen: " + err.message, "neg");
-    console.warn("[refresh] fatal", err);
-  } finally { setRefreshLoading(false); }
-}
-const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label);
-const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label);
-const refreshBucket = b => refreshList(Store.state.tickers.filter(t => t.user.bucket === b), `${b} aktualisiert`);
-/* Smart bulk-refresh: with selection → only selected; empty selection → full current bucket */
+/* Bulk-Bar refresh (requires selection):
+   ⟳  → Yahoo flat + TD flat — nur Kurs/Day-Change
+   ⟳↓ → Yahoo full + TD full — Kurs + Historie/Indikatoren */
 function bulkRefresh() {
   const ui = Store.state.ui;
-  if (ui.selected.length > 0) {
-    refreshList(Store.state.tickers.filter(t => ui.selected.includes(t.id)), "ausgewählte aktualisiert");
-  } else {
-    refreshList(Store.state.tickers.filter(t => t.user.bucket === ui.bucket), `${ui.bucket} aktualisiert`);
-  }
+  if (!ui.selected.length) { toast("Keine Auswahl", "neg"); return; }
+  const list = Store.state.tickers.filter(t => ui.selected.includes(t.id));
+  smartRefresh({ scope: "selected", tickers: list, tdMode: "flat", yahooMode: "flat", clearSel: true });
 }
 function bulkRefreshFull() {
   const ui = Store.state.ui;
-  if (ui.selected.length > 0) {
-    refreshListFull(Store.state.tickers.filter(t => ui.selected.includes(t.id)), "ausgewählte vollständig aktualisiert");
-  } else {
-    refreshListFull(Store.state.tickers.filter(t => t.user.bucket === ui.bucket), `${ui.bucket} vollständig aktualisiert`);
-  }
+  if (!ui.selected.length) { toast("Keine Auswahl", "neg"); return; }
+  const list = Store.state.tickers.filter(t => ui.selected.includes(t.id));
+  smartRefresh({ scope: "selected", tickers: list, tdMode: "full", yahooMode: "full", clearSel: true });
 }
 
 function setRefreshLoading(on) {
@@ -2432,8 +2399,8 @@ function bindEvents() {
   // sub bar
   $("#btn-element-card-view") .addEventListener("click", () => { Store.patchUi({ view: "cards" }); Render.viewMode(); });
   $("#btn-element-table-view").addEventListener("click", () => { Store.patchUi({ view: "table" }); Render.viewMode(); });
-  $("#btn-element-refresh")     .addEventListener("click", () => smartRefresh("flat"));
-  $("#btn-element-fullrefresh") .addEventListener("click", () => smartRefresh("full"));
+  $("#btn-element-refresh")     .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "flat" }));
+  $("#btn-element-fullrefresh") .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "full" }));
   $("#btn-filter-trig")         .addEventListener("click", () => {
     Store.patchUi({ triggeredOnly: !Store.state.ui.triggeredOnly });
     Render.filterBtn(); Render.bucket();
@@ -3311,40 +3278,54 @@ function flashUpdated(ids) {
   });
 }
 
-/* Yahoo-direct refresh — bypasses TD entirely so non-US tickers don't burn TD credits.
-   Renders immediately after each ticker resolves for responsive feedback. */
-async function yahooRefreshDirect(tickers, withHistory) {
+/* Yahoo-Stream: batched 10-parallel, 300ms pause between batches.
+   Renders + flashes per ticker. Returns { ok, failed }. */
+const YAHOO_BATCH = 10;
+const YAHOO_PAUSE_MS = 300;
+
+async function yahooStreamRefresh(tickers, withHistory, label = "Yahoo") {
   if (!tickers.length) return { ok: 0, failed: [] };
-  let ok = 0; const failed = []; const updatedIds = [];
-  await Promise.allSettled(tickers.map(async t => {
-    const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
-    const y = await API.yahooQuote(t, withHistory);
-    if (!y || y._error) {
-      failed.push({ symbol: sym, error: (y && y._error) || "Kein Yahoo-Ergebnis" });
-      return;
+  let ok = 0; const failed = [];
+  const total = tickers.length;
+  let done = 0;
+
+  for (let i = 0; i < tickers.length; i += YAHOO_BATCH) {
+    const chunk = tickers.slice(i, i + YAHOO_BATCH);
+    Progress.set(`${label} ${Math.min(i + YAHOO_BATCH, total)}/${total}`, `${label}: Batch läuft`);
+
+    await Promise.allSettled(chunk.map(async t => {
+      const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
+      const y = await API.yahooQuote(t, withHistory);
+      done++;
+      if (!y || y._error) {
+        failed.push({ symbol: sym, error: (y && y._error) || "Kein Yahoo-Ergebnis" });
+        return;
+      }
+      t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
+      Object.assign(t.quotes, y.quote || {});
+      if (withHistory && Array.isArray(y.closes) && y.closes.length) {
+        const indicators = Calc.indicatorsFromCloses(y.closes, t.quotes.price);
+        Object.assign(t.quotes, indicators);
+        t.quotes.last7d = y.closes.slice(-7);
+      }
+      t.quotes._source = "yahoo";
+      ok++;
+      Calc.recompute(t);
+      Render.all();
+      flashUpdated([t.id]);
+    }));
+    Store.save();
+    if (i + YAHOO_BATCH < tickers.length) {
+      await new Promise(r => setTimeout(r, YAHOO_PAUSE_MS));
     }
-    t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
-    Object.assign(t.quotes, y.quote || {});
-    if (withHistory && Array.isArray(y.closes) && y.closes.length) {
-      const indicators = Calc.indicatorsFromCloses(y.closes, t.quotes.price);
-      Object.assign(t.quotes, indicators);
-      t.quotes.last7d = y.closes.slice(-7);
-    }
-    t.quotes._source = "yahoo";
-    ok++;
-    updatedIds.push(t.id);
-    Calc.recompute(t);
-    Render.all();
-    flashUpdated([t.id]);
-  }));
-  Store.save();
+  }
   return { ok, failed };
 }
 
-/* TwelveData free-tier rate limiter: 8 credits/min, 1 credit = 1 symbol.
+/* TwelveData free-tier rate limiter: 7 credits/min (1 credit reserve), 1 credit = 1 symbol.
    Called automatically by tdQuoteBatch + tdTimeSeriesBatch — protects all call paths. */
 const TdRL = {
-  MAX: 8, WIN: 60_000, DAY_MAX: 800,
+  MAX: 7, WIN: 60_000, DAY_MAX: 800,
   _used: 0, _winStart: 0,
   _dayUsed: 0, _dayKey: "",
   STORAGE_KEY: "td_rl_v1",
@@ -3386,46 +3367,89 @@ const TdRL = {
   }
 };
 
-/* TD refresh with context label — rate limiting handled inside API batch calls. */
-async function tdRefreshThrottled(tickers, mode, label) {
+/* TD-Stream: chunks tickers into batches of TdRL.MAX (7) so each batch renders
+   independently — gives immediate feedback even when minute-window hits.
+   The TdRL throttle inside tdQuoteBatch/tdTimeSeriesBatch still protects the credit budget. */
+async function tdStreamRefresh(tickers, mode, label = "TD") {
   if (!tickers.length) return { ok: 0, failed: [] };
-  Progress.set(`${label} …`, `${label}: wird geladen`);
   const refreshFn = mode === "full" ? API.refreshFullMany : API.refreshMany;
-  const res = await refreshFn(tickers);
-  Calc.recomputeAll();
-  Store.save();
-  Render.all();
-  if (res.updatedIds?.length) flashUpdated(res.updatedIds);
-  return res;
+  let ok = 0; const failed = [];
+  const total = tickers.length;
+
+  for (let i = 0; i < tickers.length; i += TdRL.MAX) {
+    const chunk = tickers.slice(i, i + TdRL.MAX);
+    Progress.set(`${label} ${Math.min(i + TdRL.MAX, total)}/${total}`, `${label}: Batch läuft`);
+    const res = await refreshFn(chunk);
+    ok += res.ok || 0;
+    if (res.failed?.length) failed.push(...res.failed);
+    Calc.recomputeAll();
+    Store.save();
+    Render.all();
+    if (res.updatedIds?.length) flashUpdated(res.updatedIds);
+  }
+  return { ok, failed };
 }
 
-/* Smart refresh: split by data source, process Portfolio → Watchlist sequentially.
-   Yahoo always flat (parallel). TD throttled to free-tier limits. */
-async function smartRefresh(mode = "flat") {
+/* Split a ticker list into yahoo / td routes based on exchange classification. */
+function splitByRoute(tickers) {
+  return {
+    yahoo: tickers.filter(t => !isUSTicker(t)),
+    td:    tickers.filter(t =>  isUSTicker(t))
+  };
+}
+
+/* Build yahoo + td ticker lists based on scope.
+   - onload:   Yahoo = Portfolio non-US + Watchlist non-US + Neutral ALL.
+               TD    = Portfolio US + Watchlist US (Neutral NIE TD).
+   - active:   Yahoo = active bucket non-US (or ALL if bucket=neutral).
+               TD    = active bucket US (empty if bucket=neutral).
+   - selected: split the given ticker list by route.  */
+function buildRefreshScope(scope, opts = {}) {
+  const all = Store.state.tickers;
+  if (scope === "selected") {
+    return splitByRoute(opts.tickers || []);
+  }
+  if (scope === "active") {
+    const b = Store.state.ui.bucket;
+    const list = all.filter(t => t.user.bucket === b);
+    if (b === "neutral") return { yahoo: list, td: [] };
+    return splitByRoute(list);
+  }
+  /* onload */
+  const portfolio = all.filter(t => t.user.bucket === "portfolio");
+  const watchlist = all.filter(t => t.user.bucket === "watchlist");
+  const neutral   = all.filter(t => t.user.bucket === "neutral");
+  return {
+    yahoo: [...portfolio.filter(t => !isUSTicker(t)),
+            ...watchlist.filter(t => !isUSTicker(t)),
+            ...neutral],
+    td:    [...portfolio.filter(t => isUSTicker(t)),
+            ...watchlist.filter(t => isUSTicker(t))]
+  };
+}
+
+/* Unified refresh entry point. Yahoo + TD streams run in parallel.
+   opts:
+     scope:     "onload" | "active" | "selected"
+     tdMode:    "flat" | "full"             (default "flat")
+     yahooMode: "flat" | "full"             (default "full")
+     tickers:   array (required if scope=selected)
+     clearSel:  bool — clear UI selection after completion */
+async function smartRefresh(opts = {}) {
+  const { scope = "onload", tdMode = "flat", yahooMode = "full", tickers = null, clearSel = false } = opts;
   setRefreshLoading(true);
+  const { yahoo, td } = buildRefreshScope(scope, { tickers });
   const summary = { yahoo: { ok: 0, failed: 0 }, td: { ok: 0, failed: 0 } };
   try {
-    const BUCKET_LABEL = { portfolio: "Portfolio", watchlist: "Watchlist", neutral: "Neutral" };
-    for (const bucket of ["portfolio", "watchlist", "neutral"]) {
-      const list = Store.state.tickers.filter(t => t.user.bucket === bucket);
-      if (!list.length) continue;
-      const yahoo = list.filter(t => !isUSTicker(t));
-      const td    = list.filter(t =>  isUSTicker(t));
-      const bLabel = BUCKET_LABEL[bucket] || bucket;
+    const [yRes, tRes] = await Promise.all([
+      yahooStreamRefresh(yahoo, yahooMode === "full", "Yahoo"),
+      tdStreamRefresh(td, tdMode, "TD")
+    ]);
+    summary.yahoo.ok = yRes.ok || 0;
+    summary.yahoo.failed = (yRes.failed || []).length;
+    summary.td.ok = tRes.ok || 0;
+    summary.td.failed = (tRes.failed || []).length;
 
-      if (yahoo.length) {
-        Progress.set(`${bLabel} Yahoo`, `${bLabel}: Yahoo-Fetch läuft`);
-        const res = await yahooRefreshDirect(yahoo, mode === "full");
-        summary.yahoo.ok += res.ok || 0;
-        summary.yahoo.failed += (res.failed || []).length;
-        // yahooRefreshDirect already recomputes + renders per ticker
-      }
-      if (td.length) {
-        const res = await tdRefreshThrottled(td, mode, `${bLabel} TD`);
-        summary.td.ok += res.ok || 0;
-        summary.td.failed += (res.failed || []).length;
-      }
-    }
     const totalOk = summary.yahoo.ok + summary.td.ok;
     const totalFail = summary.yahoo.failed + summary.td.failed;
     if (totalOk && !totalFail)      toast(`${totalOk} aktualisiert`, "pos");
@@ -3437,6 +3461,8 @@ async function smartRefresh(mode = "flat") {
   } finally {
     Progress.clear();
     setRefreshLoading(false);
+    if (clearSel) { Store.patchUi({ selected: [] }); }
+    Render.bulkbar();
   }
 }
 
@@ -3461,7 +3487,9 @@ function init() {
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
+  /* On-Load Refresh: Portfolio+Watchlist non-US + Neutral all via Yahoo;
+     Portfolio+Watchlist US via TD (flat). Yahoo + TD parallel. */
   /* Initial flat refresh on page load (Portfolio → Watchlist, Yahoo + throttled TD) */
-  smartRefresh("flat");
+  smartRefresh({ scope: "onload", tdMode: "flat", yahooMode: "full" });
 }
 document.addEventListener("DOMContentLoaded", init);
