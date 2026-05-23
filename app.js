@@ -1,3 +1,6 @@
+import { ALERT_NO_THRESHOLD, ALERT_DEFAULT_DIR, alertDir, evalAlert, evaluateAlerts, computeStatus, STATUS_MAP }
+  from './netlify/functions/lib/status-logic.js';
+
 /* ════════════════════════════════════════════════════
    SECTION 1 — CONFIG
    ════════════════════════════════════════════════════ */
@@ -672,65 +675,16 @@ const Calc = {
     return { performance_pct, performance_abs, position_value, position_pl_abs };
   },
 
-  /* evaluate one alert against current quotes → boolean trig */
-  evalAlert(alert, q) {
-    if (!alert) return false;
-    const noTh = ALERT_NO_THRESHOLD.has(alert.type);
-    if (!noTh && alert.threshold == null) return false;
-    const prev = q._prev || null;
-    switch (alert.type) {
-      case "price_below": return q.price != null && q.price <= alert.threshold;
-      case "price_above": return q.price != null && q.price >= alert.threshold;
-      case "rsi_above":   return q.rsi   != null && q.rsi   >= alert.threshold;
-      case "rsi_below":   return q.rsi   != null && q.rsi   <= alert.threshold;
-      case "ma20_below":  return q.price != null && q.ma20  != null && q.price <= q.ma20;
-      case "ma50_below":  return q.price != null && q.ma50  != null && q.price <= q.ma50;
-      case "ma200_below": return q.price != null && q.ma200 != null && q.price <= q.ma200;
-      case "macd_bullish":return q.macd_histogram != null && q.macd_histogram > 0;
-      case "macd_bearish":return q.macd_histogram != null && q.macd_histogram < 0;
-      case "ma_below_pct": { const mv = alert.ma ? q[alert.ma] : null; return mv != null && q.price != null && alert.threshold != null && q.price <= +(mv * (1 - alert.threshold / 100)).toFixed(4); }
-      case "ma_above_pct": { const mv = alert.ma ? q[alert.ma] : null; return mv != null && q.price != null && alert.threshold != null && q.price >= +(mv * (1 + alert.threshold / 100)).toFixed(4); }
-      case "reversal_up_short":
-        return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
-          && prev.macd_histogram <= 0 && q.macd_histogram > 0);
-      case "reversal_down_short":
-        return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
-          && prev.macd_histogram >= 0 && q.macd_histogram < 0);
-      case "reversal_up_long":
-        return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
-          && prev.price <= prev.ma200 && q.price > q.ma200);
-      case "reversal_down_long":
-        return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
-          && prev.price >= prev.ma200 && q.price < q.ma200);
-      case "vol_spike":
-        return q.volume != null && q.avg_volume != null && q.avg_volume > 0 && q.volume >= alert.threshold * q.avg_volume;
-      default: return false;
-    }
-  },
+  /* evaluate one alert against current quotes → boolean trig (delegates to lib) */
+  evalAlert(alert, q) { return evalAlert(alert, q); },
 
   /* recompute calculations block for ONE ticker */
   recompute(t) {
     const sent = Calc.sentiment(t.quotes);
     const pos  = Calc.position(t);
-    const raw  = t.user.alerts || [];
-    /* A9: alerts with same `group` form AND-condition (all must trigger) */
-    const groupResults = new Map();
-    raw.forEach(a => {
-      if (!a.group) return;
-      const cur  = groupResults.get(a.group);
-      const trig = Calc.evalAlert(a, t.quotes);
-      groupResults.set(a.group, cur == null ? trig : cur && trig);
-    });
-    const alerts = raw.map(a => {
-      const _trig = a.group ? !!groupResults.get(a.group) : Calc.evalAlert(a, t.quotes);
-      return { ...a, _trig };
-    });
-    const alert_triggered = alerts.some(a => a._trig);
-    /* A1: dominant direction of triggered alerts — sell wins over buy if both */
-    const trigDirs = alerts.filter(a => a._trig).map(alertDir);
-    const alert_triggered_dir = trigDirs.includes("sell") ? "sell"
-      : trigDirs.includes("buy") ? "buy"
-      : trigDirs.length ? "watch" : null;
+    /* A9: evaluateAlerts handles AND-groups and computes alert_triggered_dir */
+    const { alerts, alert_triggered, alert_triggered_dir } =
+      evaluateAlerts(t.user.alerts || [], t.quotes);
     t.calculations = {
       trends: {
         sentiment: sent.sentiment,
@@ -1456,7 +1410,7 @@ function openInfo(id) {
     <div class="modal__field"><label>Sentiment / Trend</label><div>${c.sentiment || "—"} · ${numFmt(c.sentiment_score, 2)} · ${c.trend_strength || "—"}</div></div>
     <div class="modal__field"><label>Quote-Zeitpunkt</label><div>${t.quotes.ts ? new Date(t.quotes.ts).toLocaleString("de-DE") : "—"} · Quelle: ${t.quotes._source || "—"}</div></div>
   `;
-  if (typeof PROMPTS !== "undefined") updatePromptText();
+  if (typeof window.PROMPTS !== "undefined") updatePromptText();
   openModal("#modal-info");
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
@@ -1489,22 +1443,7 @@ function openEdit(id) {
   if (isPortfolio) renderTradeEditor(t.user.trades || []);
   openModal("#modal-edit");
 }
-const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
-
-/* A1: default direction per alert type */
-const ALERT_DEFAULT_DIR = {
-  price_below: "buy",  price_above: "sell",
-  rsi_below:   "buy",  rsi_above:   "sell",
-  ma20_below:  "buy",  ma50_below:  "buy",  ma200_below: "buy",
-  ma_below_pct:"buy",  ma_above_pct:"sell",
-  macd_bullish:"buy",  macd_bearish:"sell",
-  reversal_up_short:"buy",  reversal_down_short:"sell",
-  reversal_up_long: "buy",  reversal_down_long: "sell",
-  vol_spike:   "watch"
-};
-function alertDir(a) {
-  return a.dir || a.nk_side || ALERT_DEFAULT_DIR[a.type] || "watch";
-}
+/* ALERT_NO_THRESHOLD, ALERT_DEFAULT_DIR, alertDir — imported from lib/status-logic.js */
 
 /* A6: distance to trigger — pct>0 = not yet, pct<0 = past trigger, near = within 5% */
 function alertDistance(a, q) {
@@ -2451,8 +2390,8 @@ function bindEvents() {
 
   // info modal — prompt selector
   const promptSel = $("#info-prompt-select");
-  if (promptSel && typeof PROMPTS !== "undefined") {
-    PROMPTS.forEach(p => {
+  if (promptSel && typeof window.PROMPTS !== "undefined") {
+    window.PROMPTS.forEach(p => {
       const o = document.createElement("option");
       o.value = p.id; o.textContent = p.label;
       promptSel.appendChild(o);
@@ -2558,9 +2497,9 @@ function switchView(view) {
 }
 
 function updatePromptText() {
-  if (!_currentInfoTicker || typeof PROMPTS === "undefined") return;
+  if (!_currentInfoTicker || typeof window.PROMPTS === "undefined") return;
   const sel = $("#info-prompt-select");
-  const prompt = PROMPTS.find(p => p.id === sel.value);
+  const prompt = window.PROMPTS.find(p => p.id === sel.value);
   if (!prompt) return;
   $("#info-prompt-text").value = fillPrompt(prompt.template, _currentInfoTicker);
 }
