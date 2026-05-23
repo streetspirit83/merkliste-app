@@ -686,6 +686,7 @@ const Calc = {
     /* A9: evaluateAlerts handles AND-groups and computes alert_triggered_dir */
     const { alerts, alert_triggered, alert_triggered_dir } =
       evaluateAlerts(t.user.alerts || [], t.quotes);
+    const status = computeStatus(t);
     t.calculations = {
       trends: {
         sentiment: sent.sentiment,
@@ -695,6 +696,9 @@ const Calc = {
         ...pos,
         alert_triggered,
         alert_triggered_dir,
+        status_key:   status.key,
+        status_emoji: status.emoji,
+        status_label: status.label,
         calculated_at: Date.now()
       },
       signals: null, risk_management: null,
@@ -744,6 +748,9 @@ function flat(t) {
     position_value: c.position_value, position_pl_abs: c.position_pl_abs,
     alert_triggered: !!c.alert_triggered,
     alert_triggered_dir: c.alert_triggered_dir || null,
+    status_key:   c.status_key   || "halten",
+    status_emoji: c.status_emoji || "—",
+    status_label: c.status_label || "Halten",
     smart_alerts: (t.calculations && t.calculations.smart_alerts) || []
   };
 }
@@ -864,6 +871,8 @@ const COLS_SELECT = [
     cell: t => `<input type="checkbox" class="row-select" data-id="${t.id}" aria-label="Wähle ${t.symbol}" />` }
 ];
 const COLS_BASE = [
+  { key:"status_key", label:"Status", cls:"col-status", noSort:true,
+    cell: t => `<span class="status-chip status-chip--${t.status_key}" title="${t.status_label}">${t.status_emoji}</span>` },
   { key:"symbol", label:"Symbol", cls:"col-sym",
     cell: t => `<span class="sym-strong">${t.symbol}</span><span class="sym-sub">${t.exchange||""}</span>` },
   { key:"price",             label:"Preis",   cell: t => numFmt(t.price) },
@@ -1155,7 +1164,10 @@ function cardDefault(t) {
     <div class="tcard__hd">
       <span class="tcard__sym">${t.symbol}</span>
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
-      <div class="tcard__hd-right">${priceLine(t)}</div>
+      <div class="tcard__hd-right">
+        ${t.status_key !== "halten" ? `<span class="status-chip status-chip--${t.status_key}" title="${t.status_label}">${t.status_emoji}</span>` : ""}
+        ${priceLine(t)}
+      </div>
     </div>
     ${_cardBody(t)}
     ${actionsRow(t)}
@@ -1184,12 +1196,14 @@ function cardPortfolio(t) {
 
   return `<article class="tcard has-select ${t.alert_triggered ? "is-trig is-trig--" + (t.alert_triggered_dir || "sell") : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
     <div class="tcard__hd">
       <span class="tcard__sym">${t.symbol}</span>
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
       ${shares}
-      <div class="tcard__hd-right">${priceLine(t)}</div>
+      <div class="tcard__hd-right">
+        ${t.status_key !== "halten" ? `<span class="status-chip status-chip--${t.status_key}" title="${t.status_label}">${t.status_emoji}</span>` : ""}
+        ${priceLine(t)}
+      </div>
     </div>
     ${subLeft || subRight ? `<div class="tcard__price-sub">
       <span class="tcard__sub-left">${subLeft}</span>
