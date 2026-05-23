@@ -4,7 +4,7 @@
  * Phase 2: Mock-Daten + console.log statt echtem Push und Blob.
  * Phase 3: echte Blob-Daten lesen, ntfy.sh Push, neuen Zustand speichern.
  *
- * Schedule (netlify.toml): "*/30 9-22 * * 1-5"
+ * Schedule (netlify.toml): alle 30 Min, Mo-Fr 9-22 Uhr
  */
 
 import { computeStatus, STATUS_MAP } from './lib/status-logic.js';
