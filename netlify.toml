@@ -8,9 +8,6 @@
 [functions]
   node_bundler = "esbuild"
 
-[functions."check-alerts"]
-  schedule = "*/30 9-22 * * 1-5"
-
 [[headers]]
   for = "/*.html"
   [headers.values]

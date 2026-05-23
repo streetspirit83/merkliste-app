@@ -91,9 +91,9 @@ async function batchFetchPrices(tickers) {
   return prices;
 }
 
-/* ── Handler ──────────────────────────────────────────────────────── */
+/* ── Handler (Functions v2) ───────────────────────────────────────── */
 
-export const handler = async () => {
+export default async () => {
   const now = new Date().toISOString();
   console.log(`[check-alerts] Start: ${now}`);
 
@@ -154,5 +154,12 @@ export const handler = async () => {
   await store.setJSON(STATE_KEY, { state: newState, updatedAt: Date.now() });
   console.log(`[check-alerts] Fertig: ${pushCount} Alert(s) gepusht`);
 
-  return { statusCode: 200, body: JSON.stringify({ alerts: pushCount }) };
+  return new Response(JSON.stringify({ alerts: pushCount }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+};
+
+export const config = {
+  schedule: "*/30 9-22 * * 1-5",
 };
