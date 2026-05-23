@@ -684,9 +684,11 @@ const Calc = {
     const sent = Calc.sentiment(t.quotes);
     const pos  = Calc.position(t);
     /* A9: evaluateAlerts handles AND-groups and computes alert_triggered_dir */
+    // Enrich quotes with computed position data so perf_below can evaluate
+    const eq = { ...t.quotes, _perf_pct: pos.performance_pct ?? null };
     const { alerts, alert_triggered, alert_triggered_dir } =
-      evaluateAlerts(t.user.alerts || [], t.quotes);
-    const status = computeStatus(t);
+      evaluateAlerts(t.user.alerts || [], eq);
+    const status = computeStatus(t, eq);
     t.calculations = {
       trends: {
         sentiment: sent.sentiment,
@@ -1501,8 +1503,9 @@ function renderAlertEditor(alerts, t) {
     const noTh    = ALERT_NO_THRESHOLD.has(a.type);
     const needsMa = MA_PCT.has(a.type);
     const isVol   = a.type === "vol_spike";
-    const pholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : "Schwelle";
-    const defVal  = a.threshold ?? (needsMa ? 20 : isVol ? 2 : "");
+    const isPerf  = a.type === "perf_below";
+    const pholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : isPerf ? "% (z.B. 10)" : "Schwelle";
+    const defVal  = a.threshold ?? (needsMa ? 20 : isVol ? 2 : isPerf ? 10 : "");
     const maVal   = a.ma || "ma50";
     const dir     = alertDir(a);
     const prevGrp = i > 0 ? alerts[i - 1].group : null;
@@ -1523,6 +1526,8 @@ function renderAlertEditor(alerts, t) {
           <option value="reversal_up_long"    ${a.type==="reversal_up_long"   ?"selected":""}>Trendwende ↑ langfristig (MA200)</option>
           <option value="reversal_down_long"  ${a.type==="reversal_down_long" ?"selected":""}>Trendwende ↓ langfristig (MA200)</option>
           <option value="vol_spike"           ${a.type==="vol_spike"          ?"selected":""}>Volumen Spike ≥ N×Ø</option>
+          <option value="perf_below"          ${a.type==="perf_below"         ?"selected":""}>Perf. ≤ −X%</option>
+          <option value="manual_stop"         ${a.type==="manual_stop"        ?"selected":""}>Manueller Stop ⛔</option>
         </select>
         <select class="al-ma" ${needsMa ? "" : "hidden"}>
           <option value="ma20"  ${maVal==="ma20" ?"selected":""}>MA20</option>
@@ -1550,11 +1555,13 @@ function renderAlertEditor(alerts, t) {
       const noTh    = ALERT_NO_THRESHOLD.has(sel.value);
       const needsMa = MA_PCT.has(sel.value);
       const isVol   = sel.value === "vol_spike";
+      const isPerf  = sel.value === "perf_below";
       const thEl = row.querySelector(".al-th");
       thEl.hidden      = noTh;
-      thEl.placeholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : "Schwelle";
+      thEl.placeholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : isPerf ? "% (z.B. 10)" : "Schwelle";
       if (needsMa && !thEl.value) thEl.value = 20;
       if (isVol   && !thEl.value) thEl.value = 2;
+      if (isPerf  && !thEl.value) thEl.value = 10;
       row.querySelector(".al-ma").hidden = !needsMa;
       /* auto-update direction default when type changes */
       const dirSel = row.querySelector(".al-dir");

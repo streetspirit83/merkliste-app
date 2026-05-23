@@ -22,7 +22,8 @@ export const ALERT_DEFAULT_DIR = {
   reversal_up_short:   "buy",   reversal_down_short: "sell",
   reversal_up_long:    "buy",   reversal_down_long:  "sell",
   vol_spike:           "watch",
-  manual_stop:         "sell"
+  manual_stop:         "sell",
+  perf_below:          "sell",  // performance drop alert — default sell direction
 };
 
 export function alertDir(a) {
@@ -64,6 +65,10 @@ export function evalAlert(alert, q) {
     case "vol_spike":
       return q.volume != null && q.avg_volume != null && q.avg_volume > 0
         && q.volume >= alert.threshold * q.avg_volume;
+    // _perf_pct is injected by Calc.recompute via enriched quotes
+    case "perf_below":
+      return q._perf_pct != null && alert.threshold != null
+        && q._perf_pct <= -Math.abs(alert.threshold);
     default: return false;
   }
 }
@@ -108,40 +113,41 @@ export const STATUS_MAP = {
 
 /**
  * Compute the dominant status for a ticker.
- * @param {object} ticker — full ticker object with ticker.user.alerts + ticker.quotes
+ * @param {object} ticker  — full ticker object with ticker.user.alerts + ticker.quotes
+ * @param {object} [enrichedQ] — optional enriched quotes (e.g. with _perf_pct injected)
  * @returns {{ key: string, emoji: string, label: string, pushColor: string|null }}
  */
-export function computeStatus(ticker) {
-  const q      = ticker.quotes || {};
-  const raw    = ticker.user?.alerts || [];
+export function computeStatus(ticker, enrichedQ) {
+  const q   = enrichedQ || ticker.quotes || {};
+  const raw = ticker.user?.alerts || [];
   const { alerts } = evaluateAlerts(raw, q);
-  const trig   = alerts.filter(a => a._trig);
+  const trig = alerts.filter(a => a._trig);
 
-  // 1. Manual stop armed (manual_stop type is always true when present)
+  // 1. Manual stop armed
   if (trig.some(a => a.type === "manual_stop"))
     return { key: "stop", ...STATUS_MAP.stop };
 
-  // 2. price_below + dir=sell → manueller Stop-Loss
+  // 2. price_below + dir=sell → Stop-Loss
   if (trig.some(a => a.type === "price_below" && alertDir(a) === "sell"))
     return { key: "stop_loss", ...STATUS_MAP.stop_loss };
 
-  // 3. Kursziel — price_above triggered
-  if (trig.some(a => a.type === "price_above"))
+  // 3. price_above + dir=sell → Kursziel (sell target reached)
+  if (trig.some(a => a.type === "price_above" && alertDir(a) === "sell"))
     return { key: "kursziel", ...STATUS_MAP.kursziel };
 
-  // 4. Verkauf — other sell-direction price alerts (non-momentum)
+  // 4. Any other triggered sell-direction alert (non-momentum)
   if (trig.some(a => alertDir(a) === "sell" && !MOMENTUM_NEG.has(a.type)))
     return { key: "verkauf", ...STATUS_MAP.verkauf };
 
-  // 5. Momentum negativ — trend/indicator sell signals
+  // 5. Momentum negativ
   if (trig.some(a => MOMENTUM_NEG.has(a.type)))
     return { key: "momentum_neg", ...STATUS_MAP.momentum_neg };
 
-  // 6. Kauf — buy-direction price alerts (non-momentum)
+  // 6. Any triggered buy-direction alert (non-momentum)
   if (trig.some(a => alertDir(a) === "buy" && !MOMENTUM_POS.has(a.type)))
     return { key: "kauf", ...STATUS_MAP.kauf };
 
-  // 7. Momentum positiv — trend/indicator buy signals
+  // 7. Momentum positiv
   if (trig.some(a => MOMENTUM_POS.has(a.type)))
     return { key: "momentum_pos", ...STATUS_MAP.momentum_pos };
 
