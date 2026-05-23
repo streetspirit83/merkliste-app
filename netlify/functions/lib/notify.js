@@ -9,10 +9,10 @@ export async function sendNtfy(topic, { title, message, pushColor = null }) {
   const res = await fetch(`https://ntfy.sh/${topic}`, {
     method: "POST",
     headers: {
-      "Title":    title,
+      "Title":    encodeURIComponent(title),
       "Priority": PRIORITY[pushColor] ?? "3",
       "Tags":     TAGS[pushColor]     ?? "bell",
-      "Content-Type": "text/plain",
+      "Content-Type": "text/plain; charset=utf-8",
     },
     body: message,
   });
