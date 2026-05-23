@@ -672,13 +672,13 @@ tr.quote-updated td   { animation: quote-flash-row 1.2s ease-out forwards; }
 .status-chip { display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; line-height: 1; border-radius: 4px; padding: 1px 3px; }
 .col-status { width: 36px; text-align: center; }
 /* per-status tints */
-.status-chip--stop       { background: rgba(239,66,66,0.12); }
 .status-chip--stop_loss  { background: rgba(239,66,66,0.12); }
 .status-chip--verkauf    { background: rgba(251,146,60,0.12); }
 .status-chip--momentum_neg { background: rgba(251,146,60,0.10); }
 .status-chip--kauf       { background: rgba(53,133,53,0.12); }
 .status-chip--momentum_pos { background: rgba(53,133,53,0.10); }
 .status-chip--kursziel   { background: rgba(53,133,53,0.15); }
+.status-chip--halten     { opacity: 0.35; }
 .tcard__select {
   position: absolute; top: 10px; left: 12px;
   width: 18px; height: 18px;

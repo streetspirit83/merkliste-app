@@ -10,7 +10,6 @@ export const ALERT_NO_THRESHOLD = new Set([
   "macd_bullish", "macd_bearish",
   "reversal_up_short", "reversal_down_short",
   "reversal_up_long", "reversal_down_long",
-  "manual_stop"   // user-armed stop: no price threshold, always "triggered" when present
 ]);
 
 export const ALERT_DEFAULT_DIR = {
@@ -22,8 +21,8 @@ export const ALERT_DEFAULT_DIR = {
   reversal_up_short:   "buy",   reversal_down_short: "sell",
   reversal_up_long:    "buy",   reversal_down_long:  "sell",
   vol_spike:           "watch",
-  manual_stop:         "sell",
-  perf_below:          "sell",  // performance drop alert — default sell direction
+  perf_below:          "sell",
+  perf_above:          "sell",
 };
 
 export function alertDir(a) {
@@ -34,7 +33,6 @@ export function alertDir(a) {
 
 export function evalAlert(alert, q) {
   if (!alert) return false;
-  if (alert.type === "manual_stop") return true; // always fires when present
   const noTh = ALERT_NO_THRESHOLD.has(alert.type);
   if (!noTh && alert.threshold == null) return false;
   const prev = q._prev || null;
@@ -65,10 +63,12 @@ export function evalAlert(alert, q) {
     case "vol_spike":
       return q.volume != null && q.avg_volume != null && q.avg_volume > 0
         && q.volume >= alert.threshold * q.avg_volume;
-    // _perf_pct is injected by Calc.recompute via enriched quotes
     case "perf_below":
       return q._perf_pct != null && alert.threshold != null
         && q._perf_pct <= -Math.abs(alert.threshold);
+    case "perf_above":
+      return q._perf_pct != null && alert.threshold != null
+        && q._perf_pct >= Math.abs(alert.threshold);
     default: return false;
   }
 }
@@ -99,10 +99,10 @@ export function evaluateAlerts(rawAlerts, q) {
 
 const MOMENTUM_POS = new Set(["macd_bullish", "reversal_up_short", "reversal_up_long"]);
 const MOMENTUM_NEG = new Set(["macd_bearish", "reversal_down_short", "reversal_down_long"]);
+const KURSZIEL_TYPES = new Set(["price_above", "perf_above"]);
 
 export const STATUS_MAP = {
-  stop:         { emoji: "⛔", label: "Stop",               pushColor: "red"    },
-  stop_loss:    { emoji: "🛑", label: "Manueller Stop-Loss", pushColor: "red"    },
+  stop_loss:    { emoji: "🛑", label: "Stop-Loss",          pushColor: "red"    },
   verkauf:      { emoji: "↘",  label: "Verkauf",             pushColor: "orange" },
   momentum_neg: { emoji: "🔴", label: "Momentum negativ",    pushColor: "orange" },
   kauf:         { emoji: "💵", label: "Kauf",                pushColor: "green"  },
@@ -113,7 +113,7 @@ export const STATUS_MAP = {
 
 /**
  * Compute the dominant status for a ticker.
- * @param {object} ticker  — full ticker object with ticker.user.alerts + ticker.quotes
+ * @param {object} ticker    — full ticker object with ticker.user.alerts + ticker.quotes
  * @param {object} [enrichedQ] — optional enriched quotes (e.g. with _perf_pct injected)
  * @returns {{ key: string, emoji: string, label: string, pushColor: string|null }}
  */
@@ -123,31 +123,27 @@ export function computeStatus(ticker, enrichedQ) {
   const { alerts } = evaluateAlerts(raw, q);
   const trig = alerts.filter(a => a._trig);
 
-  // 1. Manual stop armed
-  if (trig.some(a => a.type === "manual_stop"))
-    return { key: "stop", ...STATUS_MAP.stop };
-
-  // 2. price_below + dir=sell → Stop-Loss
+  // 1. price_below + dir=sell → Stop-Loss
   if (trig.some(a => a.type === "price_below" && alertDir(a) === "sell"))
     return { key: "stop_loss", ...STATUS_MAP.stop_loss };
 
-  // 3. price_above + dir=sell → Kursziel (sell target reached)
-  if (trig.some(a => a.type === "price_above" && alertDir(a) === "sell"))
+  // 2. price_above / perf_above + dir=sell → Kursziel
+  if (trig.some(a => KURSZIEL_TYPES.has(a.type) && alertDir(a) === "sell"))
     return { key: "kursziel", ...STATUS_MAP.kursziel };
 
-  // 4. Any other triggered sell-direction alert (non-momentum)
+  // 3. Any other triggered sell-direction alert (non-momentum)
   if (trig.some(a => alertDir(a) === "sell" && !MOMENTUM_NEG.has(a.type)))
     return { key: "verkauf", ...STATUS_MAP.verkauf };
 
-  // 5. Momentum negativ
+  // 4. Momentum negativ
   if (trig.some(a => MOMENTUM_NEG.has(a.type)))
     return { key: "momentum_neg", ...STATUS_MAP.momentum_neg };
 
-  // 6. Any triggered buy-direction alert (non-momentum)
+  // 5. Any triggered buy-direction alert (non-momentum)
   if (trig.some(a => alertDir(a) === "buy" && !MOMENTUM_POS.has(a.type)))
     return { key: "kauf", ...STATUS_MAP.kauf };
 
-  // 7. Momentum positiv
+  // 6. Momentum positiv
   if (trig.some(a => MOMENTUM_POS.has(a.type)))
     return { key: "momentum_pos", ...STATUS_MAP.momentum_pos };
 

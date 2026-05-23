@@ -1503,7 +1503,7 @@ function renderAlertEditor(alerts, t) {
     const noTh    = ALERT_NO_THRESHOLD.has(a.type);
     const needsMa = MA_PCT.has(a.type);
     const isVol   = a.type === "vol_spike";
-    const isPerf  = a.type === "perf_below";
+    const isPerf  = a.type === "perf_below" || a.type === "perf_above";
     const pholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : isPerf ? "% (z.B. 10)" : "Schwelle";
     const defVal  = a.threshold ?? (needsMa ? 20 : isVol ? 2 : isPerf ? 10 : "");
     const maVal   = a.ma || "ma50";
@@ -1527,7 +1527,7 @@ function renderAlertEditor(alerts, t) {
           <option value="reversal_down_long"  ${a.type==="reversal_down_long" ?"selected":""}>Trendwende ↓ langfristig (MA200)</option>
           <option value="vol_spike"           ${a.type==="vol_spike"          ?"selected":""}>Volumen Spike ≥ N×Ø</option>
           <option value="perf_below"          ${a.type==="perf_below"         ?"selected":""}>Perf. ≤ −X%</option>
-          <option value="manual_stop"         ${a.type==="manual_stop"        ?"selected":""}>Manueller Stop ⛔</option>
+          <option value="perf_above"          ${a.type==="perf_above"         ?"selected":""}>Perf. ≥ +X% 💰</option>
         </select>
         <select class="al-ma" ${needsMa ? "" : "hidden"}>
           <option value="ma20"  ${maVal==="ma20" ?"selected":""}>MA20</option>
@@ -1555,7 +1555,7 @@ function renderAlertEditor(alerts, t) {
       const noTh    = ALERT_NO_THRESHOLD.has(sel.value);
       const needsMa = MA_PCT.has(sel.value);
       const isVol   = sel.value === "vol_spike";
-      const isPerf  = sel.value === "perf_below";
+      const isPerf  = sel.value === "perf_below" || sel.value === "perf_above";
       const thEl = row.querySelector(".al-th");
       thEl.hidden      = noTh;
       thEl.placeholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : isPerf ? "% (z.B. 10)" : "Schwelle";
