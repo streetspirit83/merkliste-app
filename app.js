@@ -138,6 +138,7 @@ function eff(t, field) {
   if (t.calculations && t.calculations.trends && field in t.calculations.trends) return t.calculations.trends[field];
   return null;
 }
+window.eff = eff; // prompts.js (classic script) needs eff as global
 
 /* ════════════════════════════════════════════════════
    SECTION 3 — API ADAPTERS  (Twelve Data only)
