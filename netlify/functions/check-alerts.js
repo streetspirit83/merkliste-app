@@ -115,12 +115,14 @@ function alertDetail(alert, q) {
 /* ── Push-Nachricht aufbauen ─────────────────────────────────────── */
 
 function buildMessage(ticker, status, prevKey, triggeredAlerts, enrichedQ) {
-  const u     = ticker.user  || {};
+  const u    = ticker.user  || {};
+  const name = ticker.stamm?.name;
   const lines = [`${prevKey} → ${status.key}`];
 
   if (triggeredAlerts.length) {
     lines.push(triggeredAlerts.map(a => alertDetail(a, enrichedQ)).join(", "));
   }
+  if (name)                   lines.push(name);
   if (u.entry_shares != null) lines.push(`Bestand: ${u.entry_shares} Stk.`);
   if (u.notes)                lines.push(`Notiz: ${u.notes}`);
 
