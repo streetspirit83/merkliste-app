@@ -14,7 +14,7 @@
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <!-- TEMP DEBUG — vor go-live entfernen -->
 <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init();</script>
+<script>eruda.init(); eruda.hide();</script>
 
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -451,6 +451,10 @@
   </button>
   <button class="sheet__item" id="menu-nav-btn-cloud-save">
     <i data-lucide="cloud-upload" class="icon"></i> In Cloud sichern
+  </button>
+  <div style="border-top:1px solid var(--surface); margin: var(--s-2) 0;"></div>
+  <button class="sheet__item" id="menu-nav-btn-console">
+    <i data-lucide="terminal" class="icon"></i> Console
   </button>
 </aside>
 
