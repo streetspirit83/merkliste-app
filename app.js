@@ -3431,4 +3431,9 @@ function init() {
   /* Initial flat refresh on page load (Portfolio → Watchlist, Yahoo + throttled TD) */
   smartRefresh({ scope: "onload", tdMode: "flat", yahooMode: "full" });
 }
-document.addEventListener("DOMContentLoaded", init);
+// ES modules are deferred — DOM is already parsed when this runs
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
