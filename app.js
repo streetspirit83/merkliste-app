@@ -683,9 +683,18 @@ const Calc = {
   recompute(t) {
     const sent = Calc.sentiment(t.quotes);
     const pos  = Calc.position(t);
-    /* A9: evaluateAlerts handles AND-groups and computes alert_triggered_dir */
-    // Enrich quotes with computed position data so perf_below can evaluate
-    const eq = { ...t.quotes, _perf_pct: pos.performance_pct ?? null };
+    // Convert price fields to display currency (EUR) so thresholds match what user sees
+    const rate  = Store.state.config.eur_usd;
+    const ccy   = t.quotes.currency_returned || t.stamm?.currency || "";
+    const toEur = v => (ccy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
+    const eq = {
+      ...t.quotes,
+      price: toEur(t.quotes.price),
+      ma20:  toEur(t.quotes.ma20),
+      ma50:  toEur(t.quotes.ma50),
+      ma200: toEur(t.quotes.ma200),
+      _perf_pct: pos.performance_pct ?? null,
+    };
     const { alerts, alert_triggered, alert_triggered_dir } =
       evaluateAlerts(t.user.alerts || [], eq);
     const status = computeStatus(t, eq);

@@ -1,18 +1,19 @@
 /**
  * check-alerts.js — Scheduled function: Status-Vergleich + ntfy.sh Push
- * Schedule: alle 30 Min, Mo-Fr 9-22 Uhr (config.schedule unten)
+ * Schedule: alle 30 Min, Mo-Fr 9-22 Uhr
  *
  * Ablauf:
- *  1. Tickers + Config aus Blob lesen
+ *  1. Tickers aus Blob lesen
  *  2. Vorherigen Alert-Status aus Blob lesen
- *  3. Fresh-Preis holen: US-Ticker via TD, Rest via Yahoo (Batches à 5)
- *  4. computeStatus mit enriched quotes (fresh price + stored indicators)
- *  5. Statuswechsel != halten → ntfy.sh Push mit Details
- *  6. Neuen Status in Blob speichern
+ *  3. EUR/USD-Rate live von Yahoo holen (EURUSD=X)
+ *  4. Fresh-Preis je Ticker von Yahoo (yahoo_symbol || symbol, Batches à 5)
+ *  5. Preis in Display-Währung (EUR) konvertieren — gleiche Logik wie Browser
+ *  6. computeStatus → Statuswechsel → ntfy.sh Push
+ *  7. Neuen Status in Blob speichern
  */
 
 import { getStore }                  from "@netlify/blobs";
-import { computeStatus, STATUS_MAP } from "./lib/status-logic.js";
+import { computeStatus, STATUS_MAP, evalAlert } from "./lib/status-logic.js";
 import { sendNtfy }                  from "./lib/notify.js";
 
 const NTFY_TOPIC  = process.env.NTFY_TOPIC || "mlst-alerts-h3m8w1";
@@ -21,32 +22,7 @@ const STATE_KEY   = "alert-state";
 const BATCH_SIZE  = 5;
 const BATCH_PAUSE = 300;
 
-/* ── Exchange-Routing: US via TD, Rest via Yahoo ──────────────────── */
-
-const US_MICS = new Set(["XNYS", "XNAS", "XNGS", "XNCM", "XNMS", "ARCX", "BATS"]);
-function isUSTicker(t) {
-  const mic  = (t.stamm?.twelvedata_mic_code || "").toUpperCase();
-  const exch = (t.stamm?.twelvedata_exchange || t.stamm?.exchange || "").toUpperCase();
-  if (US_MICS.has(mic)) return true;
-  if (exch.includes("NASDAQ") || exch.includes("NYSE") || exch.includes("ARCA")) return true;
-  return false;
-}
-
-/* ── TwelveData: aktuellen Preis holen ───────────────────────────── */
-
-async function fetchPriceTD(symbol, apiKey) {
-  try {
-    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.status === "error" || data.code) return null;
-    const p = parseFloat(data.price);
-    return isNaN(p) ? null : p;
-  } catch { return null; }
-}
-
-/* ── Yahoo: aktuellen Preis holen ────────────────────────────────── */
+/* ── Yahoo fetch ─────────────────────────────────────────────────── */
 
 const YAHOO_BASES = [
   "https://query2.finance.yahoo.com/v8/finance/chart",
@@ -58,7 +34,7 @@ const UA_POOL = [
   "Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0",
 ];
 
-async function fetchPriceYahoo(symbol) {
+async function yahooFetch(symbol) {
   const params = new URLSearchParams({ interval: "1d", range: "1d", includePrePost: "false" });
   for (let i = 0; i < YAHOO_BASES.length; i++) {
     try {
@@ -70,22 +46,40 @@ async function fetchPriceYahoo(symbol) {
       const data   = await res.json();
       const result = data?.chart?.result?.[0];
       if (!result) continue;
-      const p = result.meta?.regularMarketPrice;
-      return p != null ? p : null;
+      return result;
     } catch { continue; }
   }
   return null;
 }
 
-/* ── EUR/USD-Konvertierung (wie im Browser) ──────────────────────── */
+async function fetchPrice(symbol) {
+  const result = await yahooFetch(symbol);
+  if (!result) return null;
+  const p = result.meta?.regularMarketPrice;
+  return p != null ? +p : null;
+}
+
+/* Fetch EUR/USD rate — fallback 1.0 (no conversion) */
+async function fetchEurUsd() {
+  try {
+    const result = await yahooFetch("EURUSD=X");
+    const rate = result?.meta?.regularMarketPrice;
+    if (rate && rate > 0) {
+      console.log(`[check-alerts] EUR/USD: ${rate.toFixed(4)}`);
+      return rate;
+    }
+  } catch { /* ignore */ }
+  console.log("[check-alerts] EUR/USD: nicht verfügbar, kein Konvert");
+  return null;
+}
+
+/* ── EUR-Konvertierung (identisch mit Browser Calc.recompute) ─────── */
 
 function toDisplayPrice(rawPrice, ticker, eurUsd) {
   const ccy = ticker.quotes?.currency_returned || ticker.stamm?.currency || "";
-  if (ccy === "USD" && eurUsd && rawPrice != null) return rawPrice / eurUsd;
+  if (ccy === "USD" && eurUsd && rawPrice != null) return +(rawPrice / eurUsd).toFixed(4);
   return rawPrice;
 }
-
-/* ── Performance-% aus Entry-Preis + Display-Preis ──────────────── */
 
 function computePerfPct(ticker, displayPrice) {
   const ep = ticker.user?.entry_price_manual;
@@ -94,7 +88,7 @@ function computePerfPct(ticker, displayPrice) {
   return ((displayPrice - ep) / ep) * 100;
 }
 
-/* ── Triggered-Alert-Details für Push-Nachricht ─────────────────── */
+/* ── Alert-Detail für Push ───────────────────────────────────────── */
 
 function alertDetail(alert, q) {
   const th = alert.threshold != null ? alert.threshold : null;
@@ -112,37 +106,30 @@ function alertDetail(alert, q) {
   }
 }
 
-/* ── Push-Nachricht aufbauen ─────────────────────────────────────── */
-
 function buildMessage(ticker, status, prevKey, triggeredAlerts, enrichedQ) {
-  const u    = ticker.user  || {};
+  const u    = ticker.user || {};
   const name = ticker.stamm?.name;
   const lines = [`${prevKey} → ${status.key}`];
-
-  if (triggeredAlerts.length) {
-    lines.push(triggeredAlerts.map(a => alertDetail(a, enrichedQ)).join(", "));
-  }
+  if (triggeredAlerts.length) lines.push(triggeredAlerts.map(a => alertDetail(a, enrichedQ)).join(", "));
   if (name)                   lines.push(name);
   if (u.entry_shares != null) lines.push(`Bestand: ${u.entry_shares} Stk.`);
   if (u.notes)                lines.push(`Notiz: ${u.notes}`);
-
   return lines.join("\n");
 }
 
-/* ── Batch-Fetch ─────────────────────────────────────────────────── */
+/* ── Batch fetch ─────────────────────────────────────────────────── */
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function batchFetchPrices(tickers, tdKey) {
+async function batchFetchPrices(tickers) {
   const prices = {};
   for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
     const batch = tickers.slice(i, i + BATCH_SIZE);
     await Promise.allSettled(batch.map(async t => {
-      const usesTD = isUSTicker(t) && tdKey;
-      const sym    = usesTD ? (t.stamm.twelvedata_symbol || t.stamm.symbol) : t.stamm.symbol;
-      const p      = usesTD ? await fetchPriceTD(sym, tdKey) : await fetchPriceYahoo(sym);
+      const sym = t.stamm.yahoo_symbol || t.stamm.symbol;
+      const p   = await fetchPrice(sym);
       prices[t.id] = p;
-      console.log(`[price] ${t.stamm.symbol} via ${usesTD ? "TD" : "Yahoo"}: ${p ?? "—"}`);
+      console.log(`[yahoo] ${t.stamm.symbol}${sym !== t.stamm.symbol ? ` (${sym})` : ""}: ${p ?? "—"}`);
     }));
     if (i + BATCH_SIZE < tickers.length) await sleep(BATCH_PAUSE);
   }
@@ -164,28 +151,33 @@ export default async () => {
 
   const prevData  = await store.get(STATE_KEY, { type: "json" }).catch(() => null);
   const prevState = prevData?.state ?? {};
-  const eurUsd    = blobData.config?.eur_usd ?? null;
-  const tdKey     = blobData.config?.twelveDataKey || null;
 
-  console.log(`[check-alerts] EUR/USD: ${eurUsd ?? "nicht gesetzt"} | TD-Key: ${tdKey ? "✓" : "—"}`);
+  // EUR/USD live von Yahoo
+  const eurUsd = await fetchEurUsd();
 
   const alertTickers = blobData.tickers.filter(t => t.user?.alerts?.length > 0);
   console.log(`[check-alerts] ${alertTickers.length} Ticker mit Alerts / ${blobData.tickers.length} gesamt`);
 
-  const freshPrices = await batchFetchPrices(alertTickers, tdKey);
+  const freshPrices = await batchFetchPrices(alertTickers);
 
   const newState  = { ...prevState };
   let   pushCount = 0;
 
   for (const ticker of alertTickers) {
-    const symbol   = ticker.stamm?.symbol;
-    const rawPrice = freshPrices[ticker.id] ?? null;
+    const symbol    = ticker.stamm?.symbol;
+    const rawPrice  = freshPrices[ticker.id] ?? null;
     const dispPrice = toDisplayPrice(rawPrice, ticker, eurUsd);
     const perfPct   = computePerfPct(ticker, dispPrice);
 
+    // Preis-Felder der stored quotes ebenfalls konvertieren (für MA-Alerts)
+    const ccy    = ticker.quotes?.currency_returned || ticker.stamm?.currency || "";
+    const toEur  = v => (ccy === "USD" && eurUsd && v != null) ? +(v / eurUsd).toFixed(4) : v;
     const enrichedQ = {
       ...ticker.quotes,
-      ...(dispPrice != null ? { price: dispPrice } : {}),
+      price: dispPrice ?? toEur(ticker.quotes?.price),
+      ma20:  toEur(ticker.quotes?.ma20),
+      ma50:  toEur(ticker.quotes?.ma50),
+      ma200: toEur(ticker.quotes?.ma200),
       _perf_pct: perfPct,
     };
 
@@ -193,17 +185,15 @@ export default async () => {
     const prevKey = prevState[ticker.id] ?? "halten";
     newState[ticker.id] = status.key;
 
-    // Debug-Log: immer Preis + Status zeigen
-    console.log(`[eval] ${symbol}: raw=${rawPrice?.toFixed(2) ?? "—"} disp=${dispPrice?.toFixed(2) ?? "—"} perf=${perfPct?.toFixed(1) ?? "—"}% status=${status.key} prev=${prevKey}`);
+    console.log(`[eval] ${symbol}: disp=${dispPrice?.toFixed(2) ?? "—"} perf=${perfPct?.toFixed(1) ?? "—"}% → ${status.key} (prev: ${prevKey})`);
 
     if (prevKey === status.key || status.key === "halten") {
-      console.log(`[OK]   ${status.emoji} ${symbol}: ${status.key} (kein Push)`);
+      console.log(`[OK]   ${status.emoji} ${symbol}: kein Push`);
       continue;
     }
 
-    const info           = STATUS_MAP[status.key] || STATUS_MAP.halten;
-    const triggeredAlerts = (ticker.calculations?.smart_alerts || ticker.user?.alerts || [])
-      .filter(a => a._trig);
+    const info            = STATUS_MAP[status.key] || STATUS_MAP.halten;
+    const triggeredAlerts = (ticker.user?.alerts || []).filter(a => evalAlert(a, enrichedQ));
     const title   = `${info.emoji} ${symbol}: ${info.label}`;
     const message = buildMessage(ticker, status, prevKey, triggeredAlerts, enrichedQ);
 
