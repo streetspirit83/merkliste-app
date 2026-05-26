@@ -679,6 +679,7 @@ tr.quote-updated td   { animation: quote-flash-row 1.2s ease-out forwards; }
 .status-chip--momentum_pos { background: rgba(53,133,53,0.10); }
 .status-chip--kursziel   { background: rgba(53,133,53,0.15); }
 .status-chip--halten     { opacity: 0.35; }
+.status-chip--dim        { opacity: 0.28; }
 .tcard__select {
   position: absolute; top: 10px; left: 12px;
   width: 18px; height: 18px;

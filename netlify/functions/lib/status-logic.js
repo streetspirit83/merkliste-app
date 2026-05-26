@@ -97,16 +97,16 @@ export function evaluateAlerts(rawAlerts, q) {
 
 /* ── Status computation ─────────────────────────────────────────────── */
 
-const MOMENTUM_POS = new Set(["macd_bullish", "reversal_up_short", "reversal_up_long"]);
-const MOMENTUM_NEG = new Set(["macd_bearish", "reversal_down_short", "reversal_down_long"]);
-const KURSZIEL_TYPES = new Set(["price_above", "perf_above"]);
+export const MOMENTUM_POS = new Set(["macd_bullish", "reversal_up_short", "reversal_up_long"]);
+export const MOMENTUM_NEG = new Set(["macd_bearish", "reversal_down_short", "reversal_down_long"]);
+const KURSZIEL_TYPES = new Set(["perf_above"]);
 
 export const STATUS_MAP = {
-  stop_loss:    { emoji: "🛑", label: "Stop-Loss",          pushColor: "red"    },
-  verkauf:      { emoji: "↘",  label: "Verkauf",             pushColor: "orange" },
-  momentum_neg: { emoji: "🔴", label: "Momentum negativ",    pushColor: "orange" },
+  stop_loss:    { emoji: "⛔", label: "Stop-Loss",          pushColor: "red"    },
+  verkauf:      { emoji: "📤", label: "Verkauf",             pushColor: "orange" },
+  momentum_neg: { emoji: "📉", label: "Momentum negativ",    pushColor: "orange" },
   kauf:         { emoji: "💵", label: "Kauf",                pushColor: "green"  },
-  momentum_pos: { emoji: "🟢", label: "Momentum positiv",    pushColor: "green"  },
+  momentum_pos: { emoji: "📈", label: "Momentum positiv",    pushColor: "green"  },
   kursziel:     { emoji: "💰", label: "Kursziel",            pushColor: "green"  },
   halten:       { emoji: "—",  label: "Halten",              pushColor: null     },
 };

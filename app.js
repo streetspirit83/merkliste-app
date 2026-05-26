@@ -1,5 +1,15 @@
-import { ALERT_NO_THRESHOLD, ALERT_DEFAULT_DIR, alertDir, evalAlert, evaluateAlerts, computeStatus, STATUS_MAP }
+import { ALERT_NO_THRESHOLD, ALERT_DEFAULT_DIR, alertDir, evalAlert, evaluateAlerts, computeStatus, STATUS_MAP, MOMENTUM_POS, MOMENTUM_NEG }
   from './netlify/functions/lib/status-logic.js';
+
+/* Lucide-Icon je Status-Schlüssel (nur Browser) */
+const STATUS_LUCIDE = {
+  stop_loss:    "ban",
+  kursziel:     "target",
+  verkauf:      "trending-down",
+  momentum_neg: "arrow-down-right",
+  kauf:         "trending-up",
+  momentum_pos: "arrow-up-right",
+};
 
 /* ════════════════════════════════════════════════════
    SECTION 1 — CONFIG
@@ -875,6 +885,28 @@ function sortRows(rows) {
   });
 }
 
+/* ─── Status-Chip mit Lucide-Icon ───────────────────────────────────── */
+function statusIcon(key, label, dim = false) {
+  const icon = STATUS_LUCIDE[key];
+  if (!icon) return "";
+  const cls = dim
+    ? "status-chip status-chip--dim"
+    : `status-chip status-chip--${key}`;
+  return `<span class="${cls}" title="${label}"><i data-lucide="${icon}" class="icon icon-sm"></i></span>`;
+}
+
+/* Potenzial-Status: höchste Priorität unter allen gesetzten Alerts (ungefeuert) */
+function _potentialStatus(alerts) {
+  if (!alerts?.length) return null;
+  if (alerts.some(a => (a.type === "price_below" || a.type === "perf_below") && alertDir(a) === "sell")) return "stop_loss";
+  if (alerts.some(a => a.type === "perf_above" && alertDir(a) === "sell")) return "kursziel";
+  if (alerts.some(a => MOMENTUM_NEG.has(a.type))) return "momentum_neg";
+  if (alerts.some(a => alertDir(a) === "sell")) return "verkauf";
+  if (alerts.some(a => MOMENTUM_POS.has(a.type))) return "momentum_pos";
+  if (alerts.some(a => alertDir(a) === "buy")) return "kauf";
+  return "watch";
+}
+
 /* ────────── table columns ────────── */
 const COLS_SELECT = [
   { key:"__select", label:`<input type="checkbox" id="tbl-select-all" aria-label="Alle wählen" />`,
@@ -883,7 +915,16 @@ const COLS_SELECT = [
 ];
 const COLS_BASE = [
   { key:"status_key", label:"Status", cls:"col-status", noSort:true,
-    cell: t => `<span class="status-chip status-chip--${t.status_key}" title="${t.status_label}">${t.status_emoji}</span>` },
+    cell: t => {
+      if (t.status_key !== "halten")
+        return statusIcon(t.status_key, t.status_label);
+      const pot = t.alerts?.length ? _potentialStatus(t.alerts) : null;
+      if (pot && pot !== "watch")
+        return statusIcon(pot, `Setup: ${STATUS_MAP[pot]?.label || pot}`, true);
+      if (pot === "watch")
+        return `<span class="status-chip status-chip--dim" title="Watch"><i data-lucide="bookmark" class="icon icon-sm"></i></span>`;
+      return "";
+    }},
   { key:"symbol", label:"Symbol", cls:"col-sym",
     cell: t => `<span class="sym-strong">${t.symbol}</span><span class="sym-sub">${t.exchange||""}</span>` },
   { key:"price",             label:"Preis",   cell: t => numFmt(t.price) },
@@ -958,6 +999,8 @@ function renderTable() {
   }).join("")
     || `<tr><td colspan="${cols.length}" class="dim" style="text-align:center;padding:24px">Keine Einträge im Bucket "${bucket}"</td></tr>`;
 
+  if (window.lucide) lucide.createIcons();
+
   // sort
   head.querySelectorAll("th[data-sortable]").forEach(th => {
     th.addEventListener("click", () => {
@@ -1018,14 +1061,25 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×" };
-  const q = t._raw && t._raw.quotes;
+  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×", perf_below:"Perf ≤", perf_above:"Perf ≥" };
+  // EUR-konvertierte Quotes für korrekte Distanzberechnung
+  const q = t._raw ? {
+    ...t._raw.quotes,
+    price:     t.price,
+    ma20:      t.ma20,
+    ma50:      t.ma50,
+    ma200:     t.ma200,
+    _perf_pct: t.performance_pct,
+  } : null;
   const out = alerts.map(a => {
     let lbl, v;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
       const sign = a.type === "ma_above_pct" ? "+" : "−";
       lbl = `${a.type==="ma_above_pct"?">":"<"}${(a.ma||"ma50").toUpperCase()} ${sign}${a.threshold}%`;
       v = "";
+    } else if (a.type === "perf_below" || a.type === "perf_above") {
+      lbl = lblMap[a.type];
+      v   = a.type === "perf_below" ? `−${a.threshold}%` : `+${a.threshold}%`;
     } else {
       lbl = lblMap[a.type] || a.type;
       v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold
@@ -1176,7 +1230,7 @@ function cardDefault(t) {
       <span class="tcard__sym">${t.symbol}</span>
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
       <div class="tcard__hd-right">
-        ${t.status_key !== "halten" ? `<span class="status-chip status-chip--${t.status_key}" title="${t.status_label}">${t.status_emoji}</span>` : ""}
+        ${t.status_key !== "halten" ? statusIcon(t.status_key, t.status_label) : ""}
         ${priceLine(t)}
       </div>
     </div>
@@ -1212,7 +1266,7 @@ function cardPortfolio(t) {
       ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
       ${shares}
       <div class="tcard__hd-right">
-        ${t.status_key !== "halten" ? `<span class="status-chip status-chip--${t.status_key}" title="${t.status_label}">${t.status_emoji}</span>` : ""}
+        ${t.status_key !== "halten" ? statusIcon(t.status_key, t.status_label) : ""}
         ${priceLine(t)}
       </div>
     </div>
@@ -1500,6 +1554,16 @@ function alertDistance(a, q) {
       if (mv == null || a.threshold == null) return { pct: null, near: false };
       return calc(mv * (1 + a.threshold / 100), q.price, 5);
     }
+    case "perf_below": {
+      if (q._perf_pct == null || a.threshold == null) return { pct: null, near: false };
+      const d = q._perf_pct + Math.abs(a.threshold); // positiv = noch X pp bis −threshold
+      return { pct: d, near: within(d, 3) };
+    }
+    case "perf_above": {
+      if (q._perf_pct == null || a.threshold == null) return { pct: null, near: false };
+      const d = Math.abs(a.threshold) - q._perf_pct; // positiv = noch X pp bis +threshold
+      return { pct: d, near: within(d, 3) };
+    }
     default: return { pct: null, near: false };
   }
 }
@@ -1522,8 +1586,8 @@ function renderAlertEditor(alerts, t) {
     return `<div class="alert-row" data-idx="${i}" data-group="${a.group || ""}">
       <div class="alert-row__main">
         <select class="al-type">
-          <option value="price_below"         ${a.type==="price_below"        ?"selected":""}>Preis ≤ (SL/Buy)</option>
-          <option value="price_above"         ${a.type==="price_above"        ?"selected":""}>Preis ≥ (Sell/TP)</option>
+          <option value="price_below"         ${a.type==="price_below"        ?"selected":""}>Preis ≤</option>
+          <option value="price_above"         ${a.type==="price_above"        ?"selected":""}>Preis ≥</option>
           <option value="ma_below_pct"        ${a.type==="ma_below_pct"       ?"selected":""}>Preis ≤ MA −X%</option>
           <option value="ma_above_pct"        ${a.type==="ma_above_pct"       ?"selected":""}>Preis ≥ MA +X%</option>
           <option value="rsi_above"           ${a.type==="rsi_above"          ?"selected":""}>RSI ≥</option>
@@ -1846,7 +1910,7 @@ function openNachkauf(id) {
   $("#modal-nk-title").textContent = `${t.stamm.symbol} · Kalkulator`;
   const entry  = t.user.entry_price_manual;
   const shares = t.user.entry_shares;
-  const price  = t.quotes.price;
+  const price  = flat(t).price; // EUR-konvertiert
   $("#nk-context").innerHTML = `Einstand <b>${entry != null ? numFmt(entry) : "—"}</b> · Stück <b>${shares != null ? numFmt(shares, 0) : "—"}</b> · Live <b>${numFmt(price)}</b>`;
   $("#nk-type").value  = "buy";
   $("#nk-pct").value   = CONFIG.defaults.nkPct;
@@ -1883,7 +1947,7 @@ function recomputeNachkauf() {
     const newShares = shares + addShares;
     const newValue  = oldValue + addValue;
     const newAvg    = newValue / newShares;
-    const liveValue = t.quotes.price != null ? newShares * t.quotes.price : null;
+    const liveValue = flat(t).price != null ? newShares * flat(t).price : null;
     const newPL     = liveValue != null ? liveValue - newValue : null;
     out.innerHTML = `
       <div class="nk-out__row"><span class="nk-out__lbl">+ Investiert</span><span class="nk-out__val">${numFmt(addValue)}</span></div>
@@ -1900,7 +1964,7 @@ function recomputeNachkauf() {
     const remainShares  = shares - sellShares;
     const costBase      = entry != null ? entry * shares : null;
     const pl            = costBase != null ? proceeds - (entry * sellShares) : null;
-    const liveRemain    = t.quotes.price != null ? remainShares * t.quotes.price : null;
+    const liveRemain    = flat(t).price != null ? remainShares * flat(t).price : null;
     out.innerHTML = `
       <div class="nk-out__row"><span class="nk-out__lbl">Verkauf Stück</span><span class="nk-out__val">${numFmt(sellShares, 4)}</span></div>
       <div class="nk-out__row"><span class="nk-out__lbl">Erlös</span><span class="nk-out__val">${numFmt(proceeds)}</span></div>
@@ -2159,9 +2223,21 @@ function openAlertsOverview() {
   const items = [];
   for (const t of tickers) {
     const trigs = (t.calculations && t.calculations.smart_alerts) || [];
-    for (const a of trigs) items.push({ t, a, dir: alertDir(a), dist: alertDistance(a, t.quotes) });
+    if (!trigs.length) continue;
+    const rate  = Store.state.config.eur_usd;
+    const ccy   = t.quotes?.currency_returned || t.stamm?.currency || "";
+    const toEur = v => (ccy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
+    const eq = {
+      ...t.quotes,
+      price: toEur(t.quotes?.price),
+      ma20:  toEur(t.quotes?.ma20),
+      ma50:  toEur(t.quotes?.ma50),
+      ma200: toEur(t.quotes?.ma200),
+      _perf_pct: t.calculations?.trends?.performance_pct ?? null,
+    };
+    for (const a of trigs) items.push({ t, a, dir: alertDir(a), dist: alertDistance(a, eq), eq });
   }
-  /* sort: triggered → near → others (by absolute distance ascending) */
+  /* sort: triggered → near → others */
   items.sort((x, y) => {
     if (x.a._trig !== y.a._trig) return x.a._trig ? -1 : 1;
     if (x.dist.near !== y.dist.near) return x.dist.near ? -1 : 1;
@@ -2169,45 +2245,54 @@ function openAlertsOverview() {
     const dy = y.dist.pct == null ? Infinity : Math.abs(y.dist.pct);
     return dx - dy;
   });
-  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig", vol_spike:"Volumen Spike ≥" };
   const body = $("#modal-alerts-body");
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
     openModal("#modal-alerts"); return;
   }
-  /* group by direction */
   const groups = { buy: [], sell: [], watch: [] };
   items.forEach(it => (groups[it.dir] || groups.watch).push(it));
   const sectionLbl = { buy: "Buy-Signale", sell: "Sell-Signale", watch: "Beobachten" };
-  const renderItem = ({ t, a, dir, dist }) => {
-    let typeLabel, valLabel;
-    if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
+
+  const renderItem = ({ t, a, dir, dist, eq }) => {
+    let typeLabel, valLabel, unit = "%";
+    if (a.type === "price_below")        { typeLabel = "Preis ≤";      valLabel = numFmt(a.threshold); }
+    else if (a.type === "price_above")   { typeLabel = "Preis ≥";      valLabel = numFmt(a.threshold); }
+    else if (a.type === "perf_below")    { typeLabel = `Perf ≤ −${a.threshold}%`; valLabel = eq._perf_pct != null ? `aktuell ${eq._perf_pct >= 0 ? "+" : ""}${eq._perf_pct.toFixed(1)}%` : "—"; unit = "pp"; }
+    else if (a.type === "perf_above")    { typeLabel = `Perf ≥ +${a.threshold}%`; valLabel = eq._perf_pct != null ? `aktuell ${eq._perf_pct >= 0 ? "+" : ""}${eq._perf_pct.toFixed(1)}%` : "—"; unit = "pp"; }
+    else if (a.type === "rsi_below")     { typeLabel = "RSI ≤"; valLabel = `${a.threshold} (aktuell ${eq.rsi != null ? eq.rsi.toFixed(0) : "—"})`; unit = "pp"; }
+    else if (a.type === "rsi_above")     { typeLabel = "RSI ≥"; valLabel = `${a.threshold} (aktuell ${eq.rsi != null ? eq.rsi.toFixed(0) : "—"})`; unit = "pp"; }
+    else if (a.type === "ma20_below")    { typeLabel = "Preis ≤ MA20";  valLabel = eq.ma20  != null ? numFmt(eq.ma20)  : "—"; }
+    else if (a.type === "ma50_below")    { typeLabel = "Preis ≤ MA50";  valLabel = eq.ma50  != null ? numFmt(eq.ma50)  : "—"; }
+    else if (a.type === "ma200_below")   { typeLabel = "Preis ≤ MA200"; valLabel = eq.ma200 != null ? numFmt(eq.ma200) : "—"; }
+    else if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
       const maName = (a.ma || "ma50").toUpperCase();
       const sign   = a.type === "ma_above_pct" ? "+" : "−";
       typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
-      const maVal = a.ma ? t.quotes[a.ma] : null;
-      const absPrice = maVal != null && a.threshold != null
-        ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
-        : null;
-      valLabel = absPrice != null ? numFmt(absPrice) : "—";
-    } else if (a.type === "vol_spike") {
-      typeLabel = lblMap[a.type] || a.type;
-      valLabel  = a.threshold != null ? `${a.threshold}×Ø` : "—";
-    } else {
-      typeLabel = lblMap[a.type] || a.type;
-      valLabel  = numFmt(a.threshold);
+      const mv  = a.ma ? eq[a.ma] : null;
+      const abs = mv != null ? +(mv * (a.type==="ma_above_pct" ? 1 + a.threshold/100 : 1 - a.threshold/100)).toFixed(2) : null;
+      valLabel  = abs != null ? numFmt(abs) : "—";
     }
-    const status = a._trig
+    else if (a.type === "macd_bullish")  { typeLabel = "MACD bullisch"; valLabel = eq.macd_histogram != null ? `Hist ${eq.macd_histogram >= 0 ? "+" : ""}${eq.macd_histogram.toFixed(3)}` : "—"; }
+    else if (a.type === "macd_bearish")  { typeLabel = "MACD bärisch";  valLabel = eq.macd_histogram != null ? `Hist ${eq.macd_histogram >= 0 ? "+" : ""}${eq.macd_histogram.toFixed(3)}` : "—"; }
+    else if (a.type === "reversal_up_short")   { typeLabel = "Trendwende ↑ kurzfristig (MACD)";  valLabel = "—"; }
+    else if (a.type === "reversal_down_short") { typeLabel = "Trendwende ↓ kurzfristig (MACD)";  valLabel = "—"; }
+    else if (a.type === "reversal_up_long")    { typeLabel = "Trendwende ↑ langfristig (MA200)"; valLabel = "—"; }
+    else if (a.type === "reversal_down_long")  { typeLabel = "Trendwende ↓ langfristig (MA200)"; valLabel = "—"; }
+    else if (a.type === "vol_spike")     { typeLabel = "Volumen Spike ≥"; valLabel = a.threshold != null ? `${a.threshold}×Ø` : "—"; }
+    else                                 { typeLabel = a.type; valLabel = numFmt(a.threshold); }
+
+    const distLbl = a._trig
       ? `<span class="alert-overview__status is-trig">⚠ ausgelöst</span>`
       : dist.pct != null
-        ? `<span class="alert-overview__status ${dist.near ? "is-near" : "dim"}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)}%</span>`
+        ? `<span class="alert-overview__status ${dist.near ? "is-near" : "dim"}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)} ${unit}</span>`
         : "";
     const grp = a.group ? `<span class="alert-overview__grp" title="AND-Gruppe">&</span>` : "";
     return `<div class="alert-overview__item alert-overview__item--${dir} ${a._trig ? "is-trig" : ""}">
       <span class="alert-overview__sym">${t.stamm.symbol}${grp}</span>
       <span class="alert-overview__type">${typeLabel}</span>
       <span class="alert-overview__val">${valLabel}</span>
-      ${status}
+      ${distLbl}
     </div>`;
   };
   body.innerHTML = ["buy","sell","watch"].filter(k => groups[k].length).map(k => `
