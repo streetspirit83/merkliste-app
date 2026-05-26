@@ -1018,25 +1018,14 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×", perf_below:"Perf ≤", perf_above:"Perf ≥" };
-  // Use EUR-converted prices so distance matches what user sees
-  const q = t._raw ? {
-    ...t._raw.quotes,
-    price:  t.price,
-    ma20:   t.ma20,
-    ma50:   t.ma50,
-    ma200:  t.ma200,
-    _perf_pct: t.performance_pct,
-  } : null;
+  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×" };
+  const q = t._raw && t._raw.quotes;
   const out = alerts.map(a => {
     let lbl, v;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
       const sign = a.type === "ma_above_pct" ? "+" : "−";
       lbl = `${a.type==="ma_above_pct"?">":"<"}${(a.ma||"ma50").toUpperCase()} ${sign}${a.threshold}%`;
       v = "";
-    } else if (a.type === "perf_below" || a.type === "perf_above") {
-      lbl = lblMap[a.type];
-      v   = a.type === "perf_below" ? `−${a.threshold}%` : `+${a.threshold}%`;
     } else {
       lbl = lblMap[a.type] || a.type;
       v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold
@@ -1510,16 +1499,6 @@ function alertDistance(a, q) {
       const mv = a.ma ? q[a.ma] : null;
       if (mv == null || a.threshold == null) return { pct: null, near: false };
       return calc(mv * (1 + a.threshold / 100), q.price, 5);
-    }
-    case "perf_below": {
-      if (q._perf_pct == null || a.threshold == null) return { pct: null, near: false };
-      const d = q._perf_pct + Math.abs(a.threshold); // positive = noch X pp entfernt von −threshold
-      return { pct: d, near: within(d, 3) };
-    }
-    case "perf_above": {
-      if (q._perf_pct == null || a.threshold == null) return { pct: null, near: false };
-      const d = Math.abs(a.threshold) - q._perf_pct; // positive = noch X pp entfernt von +threshold
-      return { pct: d, near: within(d, 3) };
     }
     default: return { pct: null, near: false };
   }
@@ -2180,20 +2159,7 @@ function openAlertsOverview() {
   const items = [];
   for (const t of tickers) {
     const trigs = (t.calculations && t.calculations.smart_alerts) || [];
-    if (!trigs.length) continue;
-    // EUR-konvertierte Quotes für korrekte Distanzberechnung
-    const rate  = Store.state.config.eur_usd;
-    const ccy   = t.quotes?.currency_returned || t.stamm?.currency || "";
-    const toEur = v => (ccy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
-    const enrichedQ = {
-      ...t.quotes,
-      price: toEur(t.quotes?.price),
-      ma20:  toEur(t.quotes?.ma20),
-      ma50:  toEur(t.quotes?.ma50),
-      ma200: toEur(t.quotes?.ma200),
-      _perf_pct: t.calculations?.trends?.performance_pct ?? null,
-    };
-    for (const a of trigs) items.push({ t, a, dir: alertDir(a), dist: alertDistance(a, enrichedQ), enrichedQ });
+    for (const a of trigs) items.push({ t, a, dir: alertDir(a), dist: alertDistance(a, t.quotes) });
   }
   /* sort: triggered → near → others (by absolute distance ascending) */
   items.sort((x, y) => {
@@ -2203,6 +2169,7 @@ function openAlertsOverview() {
     const dy = y.dist.pct == null ? Infinity : Math.abs(y.dist.pct);
     return dx - dy;
   });
+  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig", vol_spike:"Volumen Spike ≥" };
   const body = $("#modal-alerts-body");
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
@@ -2212,53 +2179,35 @@ function openAlertsOverview() {
   const groups = { buy: [], sell: [], watch: [] };
   items.forEach(it => (groups[it.dir] || groups.watch).push(it));
   const sectionLbl = { buy: "Buy-Signale", sell: "Sell-Signale", watch: "Beobachten" };
-  const renderItem = ({ t, a, dir, dist, enrichedQ }) => {
+  const renderItem = ({ t, a, dir, dist }) => {
     let typeLabel, valLabel;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
       const maName = (a.ma || "ma50").toUpperCase();
       const sign   = a.type === "ma_above_pct" ? "+" : "−";
       typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
-      const maVal = a.ma ? enrichedQ[a.ma] : null;  // EUR-konvertiert
+      const maVal = a.ma ? t.quotes[a.ma] : null;
       const absPrice = maVal != null && a.threshold != null
         ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
         : null;
       valLabel = absPrice != null ? numFmt(absPrice) : "—";
-    } else if (a.type === "perf_below" || a.type === "perf_above") {
-      const sign = a.type === "perf_below" ? "−" : "+";
-      typeLabel = `Perf ${a.type === "perf_below" ? "≤" : "≥"} ${sign}${a.threshold}%`;
-      const cur = enrichedQ._perf_pct;
-      valLabel  = cur != null ? `aktuell ${cur >= 0 ? "+" : ""}${cur.toFixed(1)}%` : "—";
     } else if (a.type === "vol_spike") {
-      typeLabel = "Volumen Spike ≥";
+      typeLabel = lblMap[a.type] || a.type;
       valLabel  = a.threshold != null ? `${a.threshold}×Ø` : "—";
-    } else if (a.type === "macd_bullish" || a.type === "macd_bearish") {
-      typeLabel = a.type === "macd_bullish" ? "MACD bullisch" : "MACD bärisch";
-      const h = enrichedQ.macd_histogram;
-      valLabel  = h != null ? `Hist ${h >= 0 ? "+" : ""}${h.toFixed(3)}` : "—";
-    } else if (a.type === "reversal_up_short")   { typeLabel = "Trendwende ↑ kurzfristig (MACD)"; valLabel = "—"; }
-    else if (a.type === "reversal_down_short") { typeLabel = "Trendwende ↓ kurzfristig (MACD)"; valLabel = "—"; }
-    else if (a.type === "reversal_up_long")    { typeLabel = "Trendwende ↑ langfristig (MA200)"; valLabel = "—"; }
-    else if (a.type === "reversal_down_long")  { typeLabel = "Trendwende ↓ langfristig (MA200)"; valLabel = "—"; }
-    else if (a.type === "ma20_below")  { typeLabel = "Preis ≤ MA20";  valLabel = enrichedQ.ma20  != null ? numFmt(enrichedQ.ma20)  : "—"; }
-    else if (a.type === "ma50_below")  { typeLabel = "Preis ≤ MA50";  valLabel = enrichedQ.ma50  != null ? numFmt(enrichedQ.ma50)  : "—"; }
-    else if (a.type === "ma200_below") { typeLabel = "Preis ≤ MA200"; valLabel = enrichedQ.ma200 != null ? numFmt(enrichedQ.ma200) : "—"; }
-    else if (a.type === "rsi_below")   { typeLabel = "RSI ≤"; valLabel = a.threshold != null ? `${a.threshold} (aktuell ${enrichedQ.rsi != null ? enrichedQ.rsi.toFixed(0) : "—"})` : "—"; }
-    else if (a.type === "rsi_above")   { typeLabel = "RSI ≥"; valLabel = a.threshold != null ? `${a.threshold} (aktuell ${enrichedQ.rsi != null ? enrichedQ.rsi.toFixed(0) : "—"})` : "—"; }
-    else if (a.type === "price_below") { typeLabel = "Preis ≤"; valLabel = numFmt(a.threshold); }
-    else if (a.type === "price_above") { typeLabel = "Preis ≥"; valLabel = numFmt(a.threshold); }
-    else                               { typeLabel = a.type; valLabel = numFmt(a.threshold); }
-
-    const distLbl = a._trig
+    } else {
+      typeLabel = lblMap[a.type] || a.type;
+      valLabel  = numFmt(a.threshold);
+    }
+    const status = a._trig
       ? `<span class="alert-overview__status is-trig">⚠ ausgelöst</span>`
       : dist.pct != null
-        ? `<span class="alert-overview__status ${dist.near ? "is-near" : "dim"}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)}${a.type === "perf_below" || a.type === "perf_above" || a.type === "rsi_below" || a.type === "rsi_above" ? " pp" : "%"}</span>`
+        ? `<span class="alert-overview__status ${dist.near ? "is-near" : "dim"}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)}%</span>`
         : "";
     const grp = a.group ? `<span class="alert-overview__grp" title="AND-Gruppe">&</span>` : "";
     return `<div class="alert-overview__item alert-overview__item--${dir} ${a._trig ? "is-trig" : ""}">
       <span class="alert-overview__sym">${t.stamm.symbol}${grp}</span>
       <span class="alert-overview__type">${typeLabel}</span>
       <span class="alert-overview__val">${valLabel}</span>
-      ${distLbl}
+      ${status}
     </div>`;
   };
   body.innerHTML = ["buy","sell","watch"].filter(k => groups[k].length).map(k => `
