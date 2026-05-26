@@ -99,7 +99,7 @@ export function evaluateAlerts(rawAlerts, q) {
 
 const MOMENTUM_POS = new Set(["macd_bullish", "reversal_up_short", "reversal_up_long"]);
 const MOMENTUM_NEG = new Set(["macd_bearish", "reversal_down_short", "reversal_down_long"]);
-const KURSZIEL_TYPES = new Set(["price_above", "perf_above"]);
+const KURSZIEL_TYPES = new Set(["perf_above"]);
 
 export const STATUS_MAP = {
   stop_loss:    { emoji: "🛑", label: "Stop-Loss",          pushColor: "red"    },
