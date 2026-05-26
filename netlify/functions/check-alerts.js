@@ -19,6 +19,7 @@ import { sendNtfy }                  from "./lib/notify.js";
 const NTFY_TOPIC  = process.env.NTFY_TOPIC || "mlst-alerts-h3m8w1";
 const TICKER_KEY  = "main";
 const STATE_KEY   = "alert-state";
+const PREV_KEY    = "prev-quotes";   // Reversal-Alerts: _prev zwischen Runs
 const BATCH_SIZE  = 5;
 const BATCH_PAUSE = 300;
 
@@ -81,7 +82,10 @@ function toDisplayPrice(rawPrice, ticker, eurUsd) {
   return rawPrice;
 }
 
-function computePerfPct(ticker, displayPrice) {
+function computePerfPct(ticker, displayPrice, eurUsd) {
+  const ccy = ticker.quotes?.currency_returned || ticker.stamm?.currency || "";
+  // Ohne EUR/USD-Rate ist der USD-Kurs nicht in EUR → Berechnung unzuverlässig
+  if (ccy === "USD" && !eurUsd) return ticker.calculations?.trends?.performance_pct ?? null;
   const ep = ticker.user?.entry_price_manual;
   if (ep == null || displayPrice == null || ep === 0)
     return ticker.calculations?.trends?.performance_pct ?? null;
@@ -149,29 +153,37 @@ export default async () => {
     return new Response("no data", { status: 200 });
   }
 
-  const prevData  = await store.get(STATE_KEY, { type: "json" }).catch(() => null);
-  const prevState = prevData?.state ?? {};
+  const prevData      = await store.get(STATE_KEY,  { type: "json" }).catch(() => null);
+  const prevState     = prevData?.state ?? {};
+  const prevQData     = await store.get(PREV_KEY,   { type: "json" }).catch(() => null);
+  const prevQuotesMap = prevQData?.quotes ?? {};
 
   // EUR/USD live von Yahoo
   const eurUsd = await fetchEurUsd();
 
-  const alertTickers = blobData.tickers.filter(t => t.user?.alerts?.length > 0);
-  console.log(`[check-alerts] ${alertTickers.length} Ticker mit Alerts / ${blobData.tickers.length} gesamt`);
+  // vol_spike aus Push-Auswertung ausschließen (Volume-Daten im Blob sind stale)
+  const alertTickers = blobData.tickers.filter(t =>
+    (t.user?.alerts || []).some(a => a.type !== "vol_spike")
+  );
+  console.log(`[check-alerts] ${alertTickers.length} Ticker mit Push-Alerts / ${blobData.tickers.length} gesamt`);
 
   const freshPrices = await batchFetchPrices(alertTickers);
 
-  const newState  = { ...prevState };
-  let   pushCount = 0;
+  const newState      = { ...prevState };
+  const newPrevQuotes = {};
+  let   pushCount     = 0;
 
   for (const ticker of alertTickers) {
     const symbol    = ticker.stamm?.symbol;
     const rawPrice  = freshPrices[ticker.id] ?? null;
     const dispPrice = toDisplayPrice(rawPrice, ticker, eurUsd);
-    const perfPct   = computePerfPct(ticker, dispPrice);
+    const perfPct   = computePerfPct(ticker, dispPrice, eurUsd); // 3.1: eurUsd-Guard
 
-    // Preis-Felder der stored quotes ebenfalls konvertieren (für MA-Alerts)
     const ccy    = ticker.quotes?.currency_returned || ticker.stamm?.currency || "";
     const toEur  = v => (ccy === "USD" && eurUsd && v != null) ? +(v / eurUsd).toFixed(4) : v;
+
+    // 3.2: _prev aus letztem Run für Reversal-Alerts
+    const prevQ  = prevQuotesMap[ticker.id] ?? null;
     const enrichedQ = {
       ...ticker.quotes,
       price: dispPrice ?? toEur(ticker.quotes?.price),
@@ -179,11 +191,22 @@ export default async () => {
       ma50:  toEur(ticker.quotes?.ma50),
       ma200: toEur(ticker.quotes?.ma200),
       _perf_pct: perfPct,
+      _prev: prevQ ?? null,
     };
 
-    const status  = computeStatus(ticker, enrichedQ);
-    const prevKey = prevState[ticker.id] ?? "halten";
+    // 3.3: vol_spike für computeStatus ausblenden (stale volume)
+    const pushAlerts = (ticker.user?.alerts || []).filter(a => a.type !== "vol_spike");
+    const pushTicker = { ...ticker, user: { ...ticker.user, alerts: pushAlerts } };
+    const status     = computeStatus(pushTicker, enrichedQ);
+    const prevKey    = prevState[ticker.id] ?? "halten";
     newState[ticker.id] = status.key;
+
+    // 3.2: aktuellen Stand für nächsten Run speichern (EUR-konvertiert)
+    newPrevQuotes[ticker.id] = {
+      price:          dispPrice ?? null,
+      macd_histogram: ticker.quotes?.macd_histogram ?? null,
+      ma200:          toEur(ticker.quotes?.ma200 ?? null),
+    };
 
     console.log(`[eval] ${symbol}: disp=${dispPrice?.toFixed(2) ?? "—"} perf=${perfPct?.toFixed(1) ?? "—"}% → ${status.key} (prev: ${prevKey})`);
 
@@ -193,7 +216,7 @@ export default async () => {
     }
 
     const info            = STATUS_MAP[status.key] || STATUS_MAP.halten;
-    const triggeredAlerts = (ticker.user?.alerts || []).filter(a => evalAlert(a, enrichedQ));
+    const triggeredAlerts = pushAlerts.filter(a => evalAlert(a, enrichedQ));
     const title   = `${info.emoji} ${symbol}: ${info.label}`;
     const message = buildMessage(ticker, status, prevKey, triggeredAlerts, enrichedQ);
 
@@ -202,7 +225,10 @@ export default async () => {
     pushCount++;
   }
 
-  await store.setJSON(STATE_KEY, { state: newState, updatedAt: Date.now() });
+  await Promise.all([
+    store.setJSON(STATE_KEY, { state: newState, updatedAt: Date.now() }),
+    store.setJSON(PREV_KEY,  { quotes: newPrevQuotes, updatedAt: Date.now() }),
+  ]);
   console.log(`[check-alerts] Fertig: ${pushCount} Alert(s) gepusht`);
 
   return new Response(JSON.stringify({ alerts: pushCount }), {
