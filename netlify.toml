@@ -2,6 +2,9 @@
   publish = "."
   functions = "netlify/functions"
 
+[build.environment]
+  NTFY_TOPIC = "mlst-alerts-h3m8w1"
+
 [functions]
   node_bundler = "esbuild"
 

@@ -12,6 +12,9 @@
 
 <!-- Lucide icons -->
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<!-- TEMP DEBUG — vor go-live entfernen -->
+<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+<script>eruda.init(); eruda.hide();</script>
 
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -37,7 +40,8 @@
         <span class="btn-text__label">Import</span>
       </button>
     </div>
-    <button class="btn-icon" id="menu-nav" aria-label="Navigation öffnen" aria-expanded="false" style="margin-left:auto">
+    <span class="auto-refresh-badge" id="auto-refresh-indicator" title="Auto-Refresh Status" style="margin-left:auto;margin-right:8px"></span>
+    <button class="btn-icon" id="menu-nav" aria-label="Navigation öffnen" aria-expanded="false">
       <i data-lucide="menu" class="icon"></i>
     </button>
   </header>
@@ -96,6 +100,10 @@
       <div id="portfolio-perf-root"></div>
       <div id="portfolio-archive-root" hidden></div>
     </section>
+
+    <section id="view-dashboard" data-view="dashboard" hidden>
+      <div id="dashboard-root"></div>
+    </section>
   </main>
 
   <!-- ════════════ BULK BAR (sticky strip above bottom-nav, when selection > 0) ════════════ -->
@@ -127,6 +135,12 @@
       <span class="bulkbar__label">Full</span>
     </button>
   </div>
+
+  <!-- ════════════ BENCHMARK BAR ════════════ -->
+  <div class="benchbar" id="benchbar" aria-label="Markt-Benchmarks"></div>
+
+  <!-- ════════════ TD STATUS BAR (visible refresh/rate-limit status) ════════════ -->
+  <div class="td-status" id="td-status" aria-live="polite"></div>
 
   <!-- ════════════ BOTTOM NAV ════════════ -->
   <nav class="botnav" aria-label="Primär">
@@ -208,7 +222,7 @@
           <option value="">—</option>
           <option value="long">Long</option>
           <option value="swing">Swing</option>
-          <option value="breakout">Breakout</option>
+          <option value="breakout">Contrarian</option>
         </select>
       </div>
     </div>
@@ -372,6 +386,23 @@
   </div>
 </div>
 
+<!-- ════════════ BENCHMARK SETTINGS MODAL ════════════ -->
+<div class="modal" id="modal-bench" hidden role="dialog" aria-modal="true" aria-labelledby="modal-bench-title">
+  <div class="modal__scrim" data-modal-close></div>
+  <div class="modal__dialog">
+    <div class="modal__head">
+      <div class="modal__title" id="modal-bench-title">Benchmark-Symbole</div>
+      <button class="btn-icon" data-modal-close aria-label="Schließen"><i data-lucide="x" class="icon"></i></button>
+    </div>
+    <div class="modal__hint">Yahoo Finance Symbole (z.B. ^GDAXI, ^GSPC, ^IXIC). Refresh erfordert Netlify-Deployment.</div>
+    <div id="bench-settings-list"></div>
+    <div class="modal__foot">
+      <button class="modal__btn" data-modal-close>Abbrechen</button>
+      <button class="modal__btn modal__btn--primary" id="modal-bench-save">Speichern</button>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════ CONFIG MODAL ════════════ -->
 <div class="modal" id="modal-config" hidden role="dialog" aria-modal="true" aria-labelledby="modal-config-title">
   <div class="modal__scrim" data-modal-close></div>
@@ -385,6 +416,7 @@
       <input id="cfg-twelvedata" type="text" placeholder="—" autocomplete="off" />
     </div>
     <div class="modal__hint">Twelve Data Free Tier: 800 Calls/Tag, max. 8/min. Ohne Key keine Refreshes.</div>
+    <div class="modal__hint" id="cfg-eur-usd-info" style="font-family:var(--font-mono);color:var(--muted)"></div>
     <div class="modal__foot">
       <button class="modal__btn" data-modal-close>Abbrechen</button>
       <button class="modal__btn modal__btn--primary" id="modal-config-save">Speichern</button>
@@ -404,6 +436,9 @@
   <button class="sheet__item" id="menu-nav-btn-screener" aria-current="true">
     <i data-lucide="search" class="icon"></i> Merkliste
   </button>
+  <button class="sheet__item" id="menu-nav-btn-dashboard">
+    <i data-lucide="layout-dashboard" class="icon"></i> Dashboard
+  </button>
   <button class="sheet__item" id="menu-nav-btn-portfolio">
     <i data-lucide="bar-chart-2" class="icon"></i> Portfolio Performance
   </button>
@@ -417,10 +452,14 @@
   <button class="sheet__item" id="menu-nav-btn-cloud-save">
     <i data-lucide="cloud-upload" class="icon"></i> In Cloud sichern
   </button>
+  <div style="border-top:1px solid var(--surface); margin: var(--s-2) 0;"></div>
+  <button class="sheet__item" id="menu-nav-btn-console">
+    <i data-lucide="terminal" class="icon"></i> Console
+  </button>
 </aside>
 
 <script src="prompts.js"></script>
-<script src="app.js"></script>
+<script src="app.js" type="module"></script>
 
 </body>
 </html>

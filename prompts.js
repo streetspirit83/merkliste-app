@@ -88,3 +88,5 @@ function fillPrompt(template, t) {
     .replace(/\{\{why_not\}\}/g,        fmt(t._raw ? eff(t._raw, "why_not") : null))
     .replace(/\{\{notes\}\}/g,          fmt(t._raw?.user?.notes));
 }
+
+window.PROMPTS = PROMPTS;

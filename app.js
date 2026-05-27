@@ -1,3 +1,16 @@
+import { ALERT_NO_THRESHOLD, ALERT_DEFAULT_DIR, alertDir, evalAlert, evaluateAlerts, computeStatus, STATUS_MAP, MOMENTUM_POS, MOMENTUM_NEG }
+  from './netlify/functions/lib/status-logic.js';
+
+/* Lucide-Icon je Status-Schlüssel (nur Browser) */
+const STATUS_LUCIDE = {
+  stop_loss:    "ban",
+  kursziel:     "target",
+  verkauf:      "trending-down",
+  momentum_neg: "arrow-down-right",
+  kauf:         "trending-up",
+  momentum_pos: "arrow-up-right",
+};
+
 /* ════════════════════════════════════════════════════
    SECTION 1 — CONFIG
    ════════════════════════════════════════════════════ */
@@ -21,12 +34,13 @@ const CONFIG = {
 
 /* helper: build empty quote+calc shells so render-functions never see undefined */
 const emptyQuotes = () => ({
-  price: null, currency_returned: null, day_change_pct: null,
+  price: null, currency_returned: null, day_change_pct: null, month_change_pct: null,
   volume: null, avg_volume: null, pos_52whigh: null, pos_52low: null, high_52w: null, low_52w: null,
   rsi: null, macd: null, macd_signal: null, macd_histogram: null,
   ma20: null, ma20_delta_pct: null,
   ma50: null, ma50_delta_pct: null,
   ma200: null, ma200_delta_pct: null,
+  last7d: null,
   ts: null, _source: null, _api_meta: null
 });
 const emptyCalcs = () => ({
@@ -40,8 +54,15 @@ const emptyCalcs = () => ({
   signals: null, risk_management: null, smart_alerts: null
 });
 
+const BENCHMARK_DEFAULTS = [
+  { symbol: "^GDAXI", td_symbol: "GDAXI", label: "DAX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
+  { symbol: "^GSPC",  td_symbol: "SPX",   label: "S&P", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] },
+  { symbol: "^IXIC",  td_symbol: "IXIC",  label: "NDX", price: null, day_change_pct: null, week_change_pct: null, month_change_pct: null, closes: [] }
+];
+
 const Schema = {
   tickers: [],
+  benchmarks: BENCHMARK_DEFAULTS.map(b => ({ ...b })),
   ui: {
     view:        CONFIG.defaults.view,
     bucket:      CONFIG.defaults.bucket,
@@ -54,7 +75,7 @@ const Schema = {
     editingId:   null,
     nachkaufId:  null
   },
-  config: { twelveDataKey: CONFIG.api.twelveData.key }
+  config: { twelveDataKey: CONFIG.api.twelveData.key, eur_usd: null, strategy_targets: { long: 50, swing: 30, breakout: 20 } }
 };
 
 const Store = {
@@ -66,6 +87,16 @@ const Store = {
         const parsed = JSON.parse(raw);
         // merge defensively — schema changes won't blow up old saves
         if (Array.isArray(parsed.tickers)) this.state.tickers = parsed.tickers;
+        if (Array.isArray(parsed.benchmarks)) {
+          parsed.benchmarks.forEach(b => {
+            const def = this.state.benchmarks.find(d => d.symbol === b.symbol);
+            if (def) Object.assign(def, b);
+          });
+          // backfill td_symbol for saved data that predates this field
+          this.state.benchmarks.forEach((b, i) => {
+            if (!b.td_symbol) b.td_symbol = BENCHMARK_DEFAULTS[i]?.td_symbol || "";
+          });
+        }
         if (parsed.ui) Object.assign(this.state.ui, parsed.ui);
         if (parsed.config) Object.assign(this.state.config, parsed.config);
         // reset transient selection
@@ -117,6 +148,7 @@ function eff(t, field) {
   if (t.calculations && t.calculations.trends && field in t.calculations.trends) return t.calculations.trends[field];
   return null;
 }
+window.eff = eff; // prompts.js (classic script) needs eff as global
 
 /* ════════════════════════════════════════════════════
    SECTION 3 — API ADAPTERS  (Twelve Data only)
@@ -147,7 +179,6 @@ const API = {
   async tdQuoteBatch(tickers) {
     const key = API._key();
     if (!tickers.length) return {};
-    /* single ticker → cleaner single-call path with mic_code */
     if (tickers.length === 1) {
       const t = tickers[0];
       const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
@@ -158,45 +189,39 @@ const API = {
         return { [sym]: { _error: err.message } };
       }
     }
-    /* >1 → comma-separated symbol list */
     const symbolStrings = tickers.map(t => {
       const sym  = t.stamm.twelvedata_symbol || t.stamm.symbol;
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
       return exch ? `${sym}:${exch}` : sym;
     });
-    const url = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
-    url.searchParams.set("symbol", symbolStrings.join(","));
-    url.searchParams.set("apikey", key);
-    const res = await fetch(url.toString());
-    const json = await res.json();
-
-    /* top-level fatal error (no per-symbol wrapper) */
-    if (json.status === "error" && !json.symbol && Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
-      throw new Error(json.message || "TD batch error");
-    }
-
-    /* TD returns { "NVDA": {...}, "SAP:XETRA": {...}, ... }; build flexible lookup */
-    const out = {};
-    /* if response has top-level `symbol` field, it's actually a single quote */
-    if (json.symbol && json.close != null) {
-      out[json.symbol] = API._tdMapQuote(json);
-      /* also map under the SYMBOL:EXCH key in case our caller looks that way */
-      out[symbolStrings[0]] = out[json.symbol];
-      return out;
-    }
-    /* iterate response keys; tolerate per-symbol error objects */
-    for (const [k, v] of Object.entries(json)) {
-      if (!v || typeof v !== "object") continue;
-      const key1 = k;                  // "SAP:XETRA"
-      const key2 = k.split(":")[0];    // "SAP"
-      if (v.status === "error" || v.code) {
-        const errMsg = v.message || "TD error";
-        out[key1] = { _error: errMsg };
-        out[key2] = out[key1];
-      } else if (v.close != null || v.price != null) {
-        out[key1] = API._tdMapQuote(v);
-        out[key2] = out[key1];
+    const fetchChunk = async (chunkSyms) => {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/quote`);
+      url.searchParams.set("symbol", chunkSyms.join(","));
+      url.searchParams.set("apikey", key);
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      if (json.status === "error" && !json.symbol && Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
+        throw new Error(json.message || "TD batch error");
       }
+      const out = {};
+      if (json.symbol && json.close != null) {
+        out[json.symbol] = API._tdMapQuote(json);
+        out[chunkSyms[0]] = out[json.symbol];
+        return out;
+      }
+      for (const [k, v] of Object.entries(json)) {
+        if (!v || typeof v !== "object") continue;
+        const k1 = k, k2 = k.split(":")[0];
+        if (v.status === "error" || v.code) { const e = v.message || "TD error"; out[k1] = { _error: e }; out[k2] = out[k1]; }
+        else if (v.close != null || v.price != null) { out[k1] = API._tdMapQuote(v); out[k2] = out[k1]; }
+      }
+      return out;
+    };
+    const out = {};
+    for (let i = 0; i < symbolStrings.length; i += TdRL.MAX) {
+      const chunk = symbolStrings.slice(i, i + TdRL.MAX);
+      await TdRL.throttle(chunk.length, `TD ${Math.min(i + TdRL.MAX, symbolStrings.length)}/${symbolStrings.length}`);
+      Object.assign(out, await fetchChunk(chunk));
     }
     return out;
   },
@@ -254,9 +279,9 @@ const API = {
   /* Returns { ok: number, failed: [{symbol, error}] } so caller can report partials.
      Quick refresh: Quote only; falls back to Yahoo (no history) for failed entries. */
   async refreshMany(tickers) {
-    if (!tickers.length) return { ok: 0, failed: [] };
+    if (!tickers.length) return { ok: 0, failed: [], updatedIds: [] };
     const map = await API.tdQuoteBatch(tickers);
-    let ok = 0; const failed = [];
+    let ok = 0; const failed = []; const updatedIds = [];
     for (const t of tickers) {
       const sym  = t.stamm.twelvedata_symbol || t.stamm.symbol;
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
@@ -265,7 +290,7 @@ const API = {
       if (entry._error)      { failed.push({ symbol: sym, error: entry._error,    ticker: t }); continue; }
       t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
       Object.assign(t.quotes, entry);
-      ok++;
+      ok++; updatedIds.push(t.id);
     }
     /* Yahoo fallback (quote only) for failed TD entries */
     if (failed.length) {
@@ -281,9 +306,9 @@ const API = {
         }
       }
       const remaining = failed.filter(f => !recovered.has(f.symbol));
-      return { ok: ok + recovered.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })) };
+      return { ok: ok + recovered.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })), updatedIds };
     }
-    return { ok, failed: [] };
+    return { ok, failed: [], updatedIds };
   },
 
   /* ───── time_series for MA/RSI calculation (Full-Refresh path) ───── */
@@ -321,54 +346,52 @@ const API = {
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
       return exch ? `${sym}:${exch}` : sym;
     });
-    const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
-    url.searchParams.set("symbol", symbolStrings.join(","));
-    url.searchParams.set("interval", "1day");
-    url.searchParams.set("outputsize", String(outputsize));
-    url.searchParams.set("order", "ASC");
-    url.searchParams.set("apikey", key);
-    const res = await fetch(url.toString());
-    const json = await res.json();
-
-    /* fatal top-level error */
-    if (json.status === "error" && !json.values && !json.meta &&
-        Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
-      throw new Error(json.message || "TD time_series batch error");
-    }
-
-    const out = {};
-    /* single-symbol fallback: TD returns flat { meta:{symbol,...}, values:[...] } */
-    if (json.values && json.meta) {
-      const sym = json.meta.symbol;
-      out[sym] = json.values.map(v => +v.close).filter(n => !isNaN(n));
-      out[symbolStrings[0]] = out[sym];
-      return out;
-    }
-    /* multi-symbol: { "NVDA": {meta, values, status}, "SAP:XETRA": {...}, ... } */
-    for (const [k, v] of Object.entries(json)) {
-      if (!v || typeof v !== "object") continue;
-      const key1 = k;
-      const key2 = k.split(":")[0];
-      if (v.status === "error" || v.code) {
-        out[key1] = { _error: v.message || "TD error" };
-        out[key2] = out[key1];
-      } else if (Array.isArray(v.values)) {
-        out[key1] = v.values.map(x => +x.close).filter(n => !isNaN(n));
-        out[key2] = out[key1];
+    const fetchChunk = async (chunkSyms) => {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/time_series`);
+      url.searchParams.set("symbol", chunkSyms.join(","));
+      url.searchParams.set("interval", "1day");
+      url.searchParams.set("outputsize", String(outputsize));
+      url.searchParams.set("order", "ASC");
+      url.searchParams.set("apikey", key);
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      if (json.status === "error" && !json.values && !json.meta &&
+          Object.keys(json).every(k => k === "status" || k === "code" || k === "message")) {
+        throw new Error(json.message || "TD time_series batch error");
       }
+      const out = {};
+      if (json.values && json.meta) {
+        const sym = json.meta.symbol;
+        out[sym] = json.values.map(v => +v.close).filter(n => !isNaN(n));
+        out[chunkSyms[0]] = out[sym];
+        return out;
+      }
+      for (const [k, v] of Object.entries(json)) {
+        if (!v || typeof v !== "object") continue;
+        const k1 = k, k2 = k.split(":")[0];
+        if (v.status === "error" || v.code) { out[k1] = { _error: v.message || "TD error" }; out[k2] = out[k1]; }
+        else if (Array.isArray(v.values)) { out[k1] = v.values.map(x => +x.close).filter(n => !isNaN(n)); out[k2] = out[k1]; }
+      }
+      return out;
+    };
+    const out = {};
+    for (let i = 0; i < symbolStrings.length; i += TdRL.MAX) {
+      const chunk = symbolStrings.slice(i, i + TdRL.MAX);
+      await TdRL.throttle(chunk.length, `TD-TS ${Math.min(i + TdRL.MAX, symbolStrings.length)}/${symbolStrings.length}`);
+      Object.assign(out, await fetchChunk(chunk));
     }
     return out;
   },
 
   /* Full refresh = quote + time_series → computes MAs/RSI from closes */
   async refreshFullMany(tickers) {
-    if (!tickers.length) return { ok: 0, failed: [] };
+    if (!tickers.length) return { ok: 0, failed: [], updatedIds: [] };
     /* run both in parallel */
     const [qMap, tsMap] = await Promise.all([
       API.tdQuoteBatch(tickers),
       API.tdTimeSeriesBatch(tickers, 210)
     ]);
-    let ok = 0; const failed = [];
+    let ok = 0; const failed = []; const updatedIds = [];
     for (const t of tickers) {
       const sym  = t.stamm.twelvedata_symbol || t.stamm.symbol;
       const exch = t.stamm.twelvedata_exchange || t.stamm.exchange;
@@ -383,6 +406,7 @@ const API = {
       if (tsEntry && !tsEntry._error && Array.isArray(tsEntry) && tsEntry.length) {
         const indicators = Calc.indicatorsFromCloses(tsEntry, t.quotes.price);
         Object.assign(t.quotes, indicators);
+        t.quotes.last7d = tsEntry.slice(-7); // ascending: oldest→newest
       }
 
       const qOk  = qEntry  && !qEntry._error;
@@ -392,9 +416,9 @@ const API = {
         failed.push({ symbol: sym, error: err, ticker: t, needsHist: true });
       } else if (!tsOk) {
         failed.push({ symbol: sym, error: "Historie fehlt: " + ((tsEntry && tsEntry._error) || "leer"), ticker: t, needsHist: true });
-        ok++;  /* quote at least worked */
+        ok++; updatedIds.push(t.id);
       } else {
-        ok++;
+        ok++; updatedIds.push(t.id);
       }
     }
 
@@ -412,6 +436,8 @@ const API = {
         if (Array.isArray(y.closes) && y.closes.length) {
           const indicators = Calc.indicatorsFromCloses(y.closes, r.ticker.quotes.price);
           Object.assign(r.ticker.quotes, indicators);
+          // Yahoo closes are descending; reverse to ascending for sparkline
+          r.ticker.quotes.last7d = y.closes.slice(-7);
           recoveredHist.add(r.symbol);
         }
         r.ticker.quotes._source = "yahoo";
@@ -419,9 +445,9 @@ const API = {
       }
       /* drop fully-recovered from failed; bump ok by count of recovered-fully */
       const remaining = failed.filter(f => !(recoveredFully.has(f.symbol) || recoveredHist.has(f.symbol)));
-      return { ok: ok + recoveredFully.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })) };
+      return { ok: ok + recoveredFully.size, failed: remaining.map(f => ({ symbol: f.symbol, error: f.error })), updatedIds };
     }
-    return { ok, failed: failed.map(f => ({ symbol: f.symbol, error: f.error })) };
+    return { ok, failed: failed.map(f => ({ symbol: f.symbol, error: f.error })), updatedIds };
   },
 
   /* ═══════ Yahoo Finance fallback via Netlify Function ═══════ */
@@ -453,6 +479,40 @@ const API = {
       out[sym] = r.status === "fulfilled" ? r.value : { _error: r.reason?.message || "Yahoo-Fehler" };
     });
     return out;
+  },
+
+  /* Fetch benchmark indices via Twelve Data.
+     Requires a TD API key — no Yahoo fallback (proxy not available locally). */
+  /* Fetch benchmark indices via Yahoo proxy (always with history for trend + 1W/1M).
+     Manual-only — not called automatically on ticker refresh. Requires Netlify. */
+  async fetchBenchmarks() {
+    const benchmarks = Store.state.benchmarks;
+    const num = v => (v == null || v === "") ? null : +v;
+    const results = await Promise.allSettled(benchmarks.map(b => {
+      const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
+      url.searchParams.set("symbol",  b.symbol);
+      url.searchParams.set("history", "1");
+      return fetch(url.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
+    }));
+    let anyOk = false;
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled" || r.value.error) return;
+      const j = r.value;
+      const q = j.quote || j.meta || {};
+      benchmarks[i].price          = num(q.regularMarketPrice ?? q.price);
+      benchmarks[i].day_change_pct = num(q.regularMarketChangePercent ?? q.percent_change);
+      if (Array.isArray(j.closes) && j.closes.length > 0) {
+        benchmarks[i].closes = j.closes.filter(n => n != null && !isNaN(+n)).map(Number);
+        const c = benchmarks[i].closes;
+        const last = c[c.length - 1];
+        benchmarks[i].week_change_pct  = c.length >= 6  ? +((last - c[c.length - 6])  / c[c.length - 6]  * 100).toFixed(2) : null;
+        benchmarks[i].month_change_pct = c.length >= 22 ? +((last - c[c.length - 22]) / c[c.length - 22] * 100).toFixed(2) : null;
+      }
+      anyOk = true;
+    });
+    Store.save();
+    renderBenchBar();
+    if (!anyOk) toast("Benchmarks: Kein Ergebnis (Netlify erforderlich)", "neg");
   },
 
   /* Heuristic: if user only set TD fields, derive Yahoo symbol from exchange */
@@ -506,6 +566,21 @@ const API = {
     };
     const closes = Array.isArray(j.closes) ? j.closes.filter(n => n != null && !isNaN(+n)).map(n => +n) : null;
     return { quote, closes };
+  },
+
+  async fetchEurUsd() {
+    const k = Store.state.config.twelveDataKey;
+    if (!k) return;
+    try {
+      const url = new URL(`${CONFIG.api.twelveData.baseUrl}/exchange_rate`);
+      url.searchParams.set("symbol", "EUR/USD");
+      url.searchParams.set("apikey", k);
+      const r = await fetch(url.toString());
+      if (!r.ok) return;
+      const j = await r.json();
+      const rate = j.rate ? +j.rate : null;
+      if (rate && rate > 0) Store.patchConfig({ eur_usd: rate });
+    } catch { /* silent — conversion falls back to raw price */ }
   }
 };
 
@@ -574,7 +649,10 @@ const Calc = {
       ma20, ma20_delta_pct:  delta(last, ma20),
       ma50, ma50_delta_pct:  delta(last, ma50),
       ma200, ma200_delta_pct: delta(last, ma200),
-      rsi, macd, macd_signal, macd_histogram
+      rsi, macd, macd_signal, macd_histogram,
+      month_change_pct: closes.length >= 22
+        ? +((last - closes[closes.length - 22]) / closes[closes.length - 22] * 100).toFixed(2)
+        : null
     };
   },
 
@@ -597,9 +675,12 @@ const Calc = {
 
   /* performance & position values from manual entry data */
   position(t) {
-    const price = t.quotes.price;
-    const entry = t.user.entry_price_manual;
-    const sh    = t.user.entry_shares;
+    const rawPrice = t.quotes.price;
+    const ccy      = t.quotes.currency_returned || t.stamm?.currency;
+    const rate     = Store.state.config.eur_usd;
+    const price    = (ccy === "USD" && rate) ? +(rawPrice / rate).toFixed(4) : rawPrice;
+    const entry    = t.user.entry_price_manual;
+    const sh       = t.user.entry_shares;
     if (price == null || entry == null) return { performance_pct: null, performance_abs: null, position_value: null, position_pl_abs: null };
     const performance_abs = +(price - entry).toFixed(2);
     const performance_pct = +((performance_abs / entry) * 100).toFixed(2);
@@ -608,46 +689,28 @@ const Calc = {
     return { performance_pct, performance_abs, position_value, position_pl_abs };
   },
 
-  /* evaluate one alert against current quotes → boolean trig */
-  evalAlert(alert, q) {
-    if (!alert) return false;
-    const noTh = ALERT_NO_THRESHOLD.has(alert.type);
-    if (!noTh && alert.threshold == null) return false;
-    const prev = q._prev || null;
-    switch (alert.type) {
-      case "price_below": return q.price != null && q.price <= alert.threshold;
-      case "price_above": return q.price != null && q.price >= alert.threshold;
-      case "rsi_above":   return q.rsi   != null && q.rsi   >= alert.threshold;
-      case "rsi_below":   return q.rsi   != null && q.rsi   <= alert.threshold;
-      case "ma20_below":  return q.price != null && q.ma20  != null && q.price <= q.ma20;
-      case "ma50_below":  return q.price != null && q.ma50  != null && q.price <= q.ma50;
-      case "ma200_below": return q.price != null && q.ma200 != null && q.price <= q.ma200;
-      case "macd_bullish":return q.macd_histogram != null && q.macd_histogram > 0;
-      case "macd_bearish":return q.macd_histogram != null && q.macd_histogram < 0;
-      case "ma_below_pct": { const mv = alert.ma ? q[alert.ma] : null; return mv != null && q.price != null && alert.threshold != null && q.price <= +(mv * (1 - alert.threshold / 100)).toFixed(4); }
-      case "ma_above_pct": { const mv = alert.ma ? q[alert.ma] : null; return mv != null && q.price != null && alert.threshold != null && q.price >= +(mv * (1 + alert.threshold / 100)).toFixed(4); }
-      case "reversal_up_short":
-        return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
-          && prev.macd_histogram <= 0 && q.macd_histogram > 0);
-      case "reversal_down_short":
-        return !!(prev && prev.macd_histogram != null && q.macd_histogram != null
-          && prev.macd_histogram >= 0 && q.macd_histogram < 0);
-      case "reversal_up_long":
-        return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
-          && prev.price <= prev.ma200 && q.price > q.ma200);
-      case "reversal_down_long":
-        return !!(prev && prev.price != null && prev.ma200 != null && q.price != null && q.ma200 != null
-          && prev.price >= prev.ma200 && q.price < q.ma200);
-      default: return false;
-    }
-  },
+  /* evaluate one alert against current quotes → boolean trig (delegates to lib) */
+  evalAlert(alert, q) { return evalAlert(alert, q); },
 
   /* recompute calculations block for ONE ticker */
   recompute(t) {
     const sent = Calc.sentiment(t.quotes);
     const pos  = Calc.position(t);
-    const alerts = (t.user.alerts || []).map(a => ({ ...a, _trig: Calc.evalAlert(a, t.quotes) }));
-    const alert_triggered = alerts.some(a => a._trig);
+    // Convert price fields to display currency (EUR) so thresholds match what user sees
+    const rate  = Store.state.config.eur_usd;
+    const ccy   = t.quotes.currency_returned || t.stamm?.currency || "";
+    const toEur = v => (ccy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
+    const eq = {
+      ...t.quotes,
+      price: toEur(t.quotes.price),
+      ma20:  toEur(t.quotes.ma20),
+      ma50:  toEur(t.quotes.ma50),
+      ma200: toEur(t.quotes.ma200),
+      _perf_pct: pos.performance_pct ?? null,
+    };
+    const { alerts, alert_triggered, alert_triggered_dir } =
+      evaluateAlerts(t.user.alerts || [], eq);
+    const status = computeStatus(t, eq);
     t.calculations = {
       trends: {
         sentiment: sent.sentiment,
@@ -656,6 +719,10 @@ const Calc = {
         trend_strength: sent.trend_strength,
         ...pos,
         alert_triggered,
+        alert_triggered_dir,
+        status_key:   status.key,
+        status_emoji: status.emoji,
+        status_label: status.label,
         calculated_at: Date.now()
       },
       signals: null, risk_management: null,
@@ -676,27 +743,38 @@ const Calc = {
 function flat(t) {
   const s = t.stamm, u = t.user, q = t.quotes;
   const c = (t.calculations && t.calculations.trends) || {};
+  const rate     = Store.state.config.eur_usd;
+  const rawCcy   = q.currency_returned || s.currency;
+  const toEur    = v => (rawCcy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
+  const price    = toEur(q.price);
+  const displayCcy = (rawCcy === "USD" && rate) ? "EUR" : rawCcy;
   return {
     id: t.id, _raw: t,
     symbol: s.symbol, name: s.name, exchange: s.exchange,
     asset_type: s.asset_type, sector: s.sector, currency: s.currency,
     tradingview_url: s.tradingview_url || null,
-    stocktwits_url: s.stocktwits_url || null,
+    stocktwits_url: s.stocktwits_url || `https://stocktwits.com/symbol/${s.symbol}`,
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
     entry_price_manual: u.entry_price_manual, entry_shares: u.entry_shares,
     alerts: u.alerts || [],
-    price: q.price, currency_returned: q.currency_returned, day_change_pct: q.day_change_pct,
+    price, currency_returned: displayCcy, day_change_pct: q.day_change_pct, month_change_pct: q.month_change_pct ?? null,
     volume: q.volume, avg_volume: q.avg_volume,
-    pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low, high_52w: q.high_52w, low_52w: q.low_52w,
+    pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low,
+    high_52w: toEur(q.high_52w), low_52w: toEur(q.low_52w),
     rsi: q.rsi, macd: q.macd, macd_signal: q.macd_signal, macd_histogram: q.macd_histogram,
-    ma20: q.ma20, ma20_delta_pct: q.ma20_delta_pct,
-    ma50: q.ma50, ma50_delta_pct: q.ma50_delta_pct,
-    ma200: q.ma200, ma200_delta_pct: q.ma200_delta_pct,
+    ma20: toEur(q.ma20), ma20_delta_pct: q.ma20_delta_pct,
+    ma50: toEur(q.ma50), ma50_delta_pct: q.ma50_delta_pct,
+    ma200: toEur(q.ma200), ma200_delta_pct: q.ma200_delta_pct,
+    last7d: q.last7d ? q.last7d.map(toEur) : null,
     ts: q.ts,
     sentiment_score: c.sentiment_score, trend_strength: c.trend_strength,
     performance_pct: c.performance_pct, performance_abs: c.performance_abs,
     position_value: c.position_value, position_pl_abs: c.position_pl_abs,
     alert_triggered: !!c.alert_triggered,
+    alert_triggered_dir: c.alert_triggered_dir || null,
+    status_key:   c.status_key   || "halten",
+    status_emoji: c.status_emoji || "—",
+    status_label: c.status_label || "Halten",
     smart_alerts: (t.calculations && t.calculations.smart_alerts) || []
   };
 }
@@ -714,16 +792,30 @@ const Render = {
     this.menu();
     this.bulkbar();
     this.filterBtn();
+    renderBenchBar();
+    const av = Store.state.ui.activeView;
+    if (av === "portfolio") {
+      const activeTab = $(".pf-tab.is-active")?.dataset?.pftab || "perf";
+      if (activeTab === "archive") renderArchiveView();
+      else renderPortfolioPerf();
+    } else if (av === "dashboard") {
+      renderDashboard();
+    }
   },
   viewMode() {
     const { view, activeView } = Store.state.ui;
-    const inScreener = activeView !== "portfolio";
+    const inScreener  = activeView === "screener";
+    const inPortfolio = activeView === "portfolio";
+    const inDashboard = activeView === "dashboard";
+    const showBench   = inScreener && view === "table";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
-    $("#subbar").hidden         = !inScreener;
-    $("#pfbar").hidden          = inScreener;
-    $("#view-screener").hidden  = !inScreener;
-    $("#view-portfolio").hidden = inScreener;
+    $("#subbar").hidden          = !inScreener;
+    $("#pfbar").hidden           = !inPortfolio;
+    $("#benchbar").hidden        = !showBench;
+    $("#view-screener").hidden   = !inScreener;
+    $("#view-portfolio").hidden  = !inPortfolio;
+    $("#view-dashboard").hidden  = !inDashboard;
     if (inScreener) {
       $("#screener-card-view") .hidden = view !== "cards";
       $("#screener-table-view").hidden = view !== "table";
@@ -758,9 +850,8 @@ const Render = {
     /* refresh-btn tooltips reflect what will actually happen */
     const rb  = $("#bulk-refresh");
     const rbf = $("#bulk-refresh-full");
-    const scope = n > 0 ? `${n} ausgewählte` : `Bucket "${cur}"`;
-    if (rb)  rb.title  = `Quick: ${scope} — nur Kurs`;
-    if (rbf) rbf.title = `Full: ${scope} — Kurs + Historie (MA/RSI)`;
+    if (rb)  { rb.title  = `Quick: ${n} ausgewählte — nur Kurs`;             rb.disabled  = n === 0; }
+    if (rbf) { rbf.title = `Full: ${n} ausgewählte — Kurs + Historie (MA/RSI)`; rbf.disabled = n === 0; }
   },
   filterBtn() {
     $("#btn-filter-trig").setAttribute("aria-pressed", !!Store.state.ui.triggeredOnly);
@@ -797,6 +888,28 @@ function sortRows(rows) {
   });
 }
 
+/* ─── Status-Chip mit Lucide-Icon ───────────────────────────────────── */
+function statusIcon(key, label, dim = false) {
+  const icon = STATUS_LUCIDE[key];
+  if (!icon) return "";
+  const cls = dim
+    ? "status-chip status-chip--dim"
+    : `status-chip status-chip--${key}`;
+  return `<span class="${cls}" title="${label}"><i data-lucide="${icon}" class="icon icon-sm"></i></span>`;
+}
+
+/* Potenzial-Status: höchste Priorität unter allen gesetzten Alerts (ungefeuert) */
+function _potentialStatus(alerts) {
+  if (!alerts?.length) return null;
+  if (alerts.some(a => (a.type === "price_below" || a.type === "perf_below") && alertDir(a) === "sell")) return "stop_loss";
+  if (alerts.some(a => a.type === "perf_above" && alertDir(a) === "sell")) return "kursziel";
+  if (alerts.some(a => MOMENTUM_NEG.has(a.type))) return "momentum_neg";
+  if (alerts.some(a => alertDir(a) === "sell")) return "verkauf";
+  if (alerts.some(a => MOMENTUM_POS.has(a.type))) return "momentum_pos";
+  if (alerts.some(a => alertDir(a) === "buy")) return "kauf";
+  return "watch";
+}
+
 /* ────────── table columns ────────── */
 const COLS_SELECT = [
   { key:"__select", label:`<input type="checkbox" id="tbl-select-all" aria-label="Alle wählen" />`,
@@ -804,10 +917,22 @@ const COLS_SELECT = [
     cell: t => `<input type="checkbox" class="row-select" data-id="${t.id}" aria-label="Wähle ${t.symbol}" />` }
 ];
 const COLS_BASE = [
+  { key:"status_key", label:"Status", cls:"col-status", noSort:true,
+    cell: t => {
+      if (t.status_key !== "halten")
+        return statusIcon(t.status_key, t.status_label);
+      const pot = t.alerts?.length ? _potentialStatus(t.alerts) : null;
+      if (pot && pot !== "watch")
+        return statusIcon(pot, `Setup: ${STATUS_MAP[pot]?.label || pot}`, true);
+      if (pot === "watch")
+        return `<span class="status-chip status-chip--dim" title="Watch"><i data-lucide="bookmark" class="icon icon-sm"></i></span>`;
+      return "";
+    }},
   { key:"symbol", label:"Symbol", cls:"col-sym",
     cell: t => `<span class="sym-strong">${t.symbol}</span><span class="sym-sub">${t.exchange||""}</span>` },
-  { key:"price",          label:"Preis",   cell: t => numFmt(t.price) },
-  { key:"day_change_pct", label:"Day %",   cell: t => `<span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>` }
+  { key:"price",             label:"Preis",   cell: t => numFmt(t.price) },
+  { key:"currency_returned", label:"Währ.",   cell: t => `<span class="dim">${t.currency_returned || "—"}</span>` },
+  { key:"day_change_pct",    label:"Day %",   cell: t => `<span class="${signCls(t.day_change_pct)}">${pctFmt(t.day_change_pct)}</span>` }
 ];
 const COLS_PORTFOLIO_EXTRA = [
   { key:"performance_pct", label:"Perf %",   cell: t => `<span class="${signCls(t.performance_pct)}">${pctFmt(t.performance_pct)}</span>` },
@@ -815,6 +940,8 @@ const COLS_PORTFOLIO_EXTRA = [
   { key:"position_pl_abs", label:"P/L",      cell: t => `<span class="${signCls(t.position_pl_abs)}">${numFmt(t.position_pl_abs)}</span>` }
 ];
 const COLS_TAIL = [
+  { key:"month_change_pct", label:"1M %",
+    cell: t => `<span class="${signCls(t.month_change_pct)}">${pctFmt(t.month_change_pct)}</span>` },
   { key:"ma20_delta_pct",  label:"MA20 Δ",  cell: t => `<span class="${signCls(t.ma20_delta_pct)}">${pctFmt(t.ma20_delta_pct)}</span>` },
   { key:"ma20",            label:"MA20",    cell: t => `<span class="dim">${numFmt(t.ma20, 2)}</span>` },
   { key:"ma50_delta_pct",  label:"MA50 Δ",  cell: t => `<span class="${signCls(t.ma50_delta_pct)}">${pctFmt(t.ma50_delta_pct)}</span>` },
@@ -877,6 +1004,8 @@ function renderTable() {
   }).join("")
     || `<tr><td colspan="${cols.length}" class="dim" style="text-align:center;padding:24px">Keine Einträge im Bucket "${bucket}"</td></tr>`;
 
+  if (window.lucide) lucide.createIcons();
+
   // sort
   head.querySelectorAll("th[data-sortable]").forEach(th => {
     th.addEventListener("click", () => {
@@ -937,19 +1066,37 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200" };
+  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×", perf_below:"Perf ≤", perf_above:"Perf ≥" };
+  // EUR-konvertierte Quotes für korrekte Distanzberechnung
+  const q = t._raw ? {
+    ...t._raw.quotes,
+    price:     t.price,
+    ma20:      t.ma20,
+    ma50:      t.ma50,
+    ma200:     t.ma200,
+    _perf_pct: t.performance_pct,
+  } : null;
   const out = alerts.map(a => {
     let lbl, v;
     if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
       const sign = a.type === "ma_above_pct" ? "+" : "−";
       lbl = `${a.type==="ma_above_pct"?">":"<"}${(a.ma||"ma50").toUpperCase()} ${sign}${a.threshold}%`;
       v = "";
+    } else if (a.type === "perf_below" || a.type === "perf_above") {
+      lbl = lblMap[a.type];
+      v   = a.type === "perf_below" ? `−${a.threshold}%` : `+${a.threshold}%`;
     } else {
       lbl = lblMap[a.type] || a.type;
-      v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold : numFmt(a.threshold);
+      v   = a.type === "rsi_above" || a.type === "rsi_below" ? a.threshold
+          : a.type === "vol_spike" ? `${a.threshold}×`
+          : numFmt(a.threshold);
     }
-    const side = a.nk_side ? ` <span class="pill pill--${a.nk_side === "buy" ? "pos" : "neg"}" style="font-size:10px">${a.nk_side === "buy" ? "B" : "S"}${a.nk_shares != null ? " " + numFmt(a.nk_shares, 0) : ""}</span>` : "";
-    return `<span class="alerts__chip ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}${side}</span>`;
+    const dir = alertDir(a);
+    const dirBadge = dir === "watch" ? "" : ` <span class="alerts__dir alerts__dir--${dir}">${dir === "buy" ? "B" : "S"}${a.nk_shares != null ? " " + numFmt(a.nk_shares, 0) : ""}</span>`;
+    const dist = q && !a._trig ? alertDistance(a, q) : { pct: null, near: false };
+    const distLbl = dist.pct != null ? ` <span class="alerts__dist ${dist.near ? "is-near" : ""}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)}%</span>` : "";
+    const grpBadge = a.group ? ` <span class="alerts__grp" title="AND-Gruppe">&</span>` : "";
+    return `<span class="alerts__chip alerts__chip--${dir} ${a._trig ? "is-trig" : ""}"><b>${lbl}</b>${v}${dirBadge}${distLbl}${grpBadge}</span>`;
   });
   return inline
     ? `<span class="alerts" style="display:inline-flex"><span class="tcard__label">Alerts</span>${out.join("")}</span>`
@@ -967,78 +1114,172 @@ function actionsRow(t) {
         <img src="https://avatars.githubusercontent.com/u/30304?s=200&v=4" class="tcard__ext-icon" alt="ST" />
        </a>` : "";
   return `<div class="tcard__actions">
-    <button class="tcard__act btn-info" data-id="${t.id}" aria-label="Details" title="Details"><i data-lucide="info" class="icon icon-sm"></i></button>
-    <button class="tcard__act btn-edit" data-id="${t.id}" aria-label="Bearbeiten" title="Bearbeiten"><i data-lucide="pencil" class="icon icon-sm"></i></button>
-    ${isPort ? `<button class="tcard__act btn-nk" data-id="${t.id}" aria-label="Nachkauf" title="Nachkauf-Kalkulator"><i data-lucide="calculator" class="icon icon-sm"></i></button>` : ""}
+    <button class="tcard__act btn-info" data-id="${t.id}" aria-label="Details" title="Details"><i data-lucide="info" class="icon icon-sm"></i><span class="tcard__act-lbl">Info</span></button>
+    <button class="tcard__act btn-edit" data-id="${t.id}" aria-label="Bearbeiten" title="Bearbeiten"><i data-lucide="pencil" class="icon icon-sm"></i><span class="tcard__act-lbl">Edit</span></button>
+    ${isPort ? `<button class="tcard__act btn-nk" data-id="${t.id}" aria-label="Nachkauf" title="Nachkauf-Kalkulator"><i data-lucide="calculator" class="icon icon-sm"></i><span class="tcard__act-lbl">Calc</span></button>` : ""}
     <span class="tcard__ext-links">${tvLink}${stLink}</span>
   </div>`;
 }
 
 function priceLine(t) {
-  const ccy = t.currency_returned || t.currency || "USD";
-  return `<span class="tcard__chip">${numFmt(t.price)} <span class="dim">${ccy}</span> <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>`;
+  const sym = ccySym(t.currency_returned || t.currency || "USD");
+  return `<span class="tcard__chip">${numFmt(t.price)} <span class="dim">${sym}</span> <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>`;
 }
-function maChip(label, v) { return `<span><span class="tcard__label">${label}</span><span class="${signCls(v)}">${pctFmt(v)}</span></span>`; }
-function trendChip(t) { return `<span class="trend"><span class="tcard__label">Trend</span>${trendBar(t.sentiment_score)}<span class="trend__val ${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>`; }
+function ccySym(code) { return code === "USD" ? "$" : code === "EUR" ? "€" : code === "GBP" ? "£" : code || ""; }
+function signedNum(v, decimals = 0, unit = "") { return v == null ? "—" : `${v >= 0 ? "+" : ""}${numFmt(v, decimals)}${unit}`; }
+function trendChip(t) {
+  return `<span class="trend trend--stacked">
+    <span class="tcard__label">Trend<span class="trend__score ${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>
+    ${trendBar(t.sentiment_score)}
+  </span>`;
+}
 function rsiChip(t) { const r = rsiClass(t.rsi); return `<span><span class="tcard__label">RSI</span><span class="rsi__dot ${r.cls}"></span>${numFmt(t.rsi, 0)} <span class="dim">(${r.label})</span></span>`; }
-function sentChip(t) { return `<span><span class="tcard__label">Sent</span><span class="${signCls(t.sentiment_score)}">${numFmt(t.sentiment_score, 2)}</span></span>`; }
-function plChip(t) {
-  if (t.performance_pct == null) return `<span><span class="tcard__label">P/L</span><span class="dim">—</span></span>`;
-  return `<span><span class="tcard__label">P/L</span><span class="${signCls(t.performance_pct)}">${pctFmt(t.performance_pct)}</span> <span class="${signCls(t.position_pl_abs)}">(${(t.position_pl_abs||0) >= 0 ? "+" : ""}${numFmt(t.position_pl_abs || 0, 0)})</span></span>`;
-}
 
 function selectChip(t) {
   const checked = Store.state.ui.selected.includes(t.id);
   return `<input type="checkbox" class="tcard__select card-select" data-id="${t.id}" aria-label="Wähle ${t.symbol}" ${checked ? "checked" : ""} />`;
 }
 
-function cardNeutral(t) {
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
+function volChip(t) {
+  if (t.volume == null || t.avg_volume == null || t.avg_volume === 0) return "";
+  const ratio = t.volume / t.avg_volume;
+  const cls = ratio >= 2 ? "pos" : "dim";
+  const arrow = ratio >= 2 ? "↑ " : "";
+  return `<span><span class="tcard__label">Vol</span><span class="${cls}">${arrow}${numFmt(ratio, 1)}×</span></span>`;
+}
+
+function sparkSVG(t) {
+  const closes = t.last7d;
+  if (!closes || closes.length < 2) {
+    return `<div class="tcard__spark-empty"></div>`;
+  }
+  const W = 200, H = 56;
+  const isPort = t.bucket === "portfolio";
+  // 52W H/L excluded from scale — they can be far from current price and would compress the chart
+  const scaleExtras = [t.ma20, t.ma50, t.ma200,
+                       isPort ? t.entry_price_manual : null].filter(v => v != null);
+  const all    = [...closes, ...scaleExtras];
+  const rawMin = Math.min(...all), rawMax = Math.max(...all);
+  const pad    = (rawMax - rawMin) * 0.1 || rawMin * 0.02 || 1;
+  const minV   = rawMin - pad, maxV = rawMax + pad;
+  const rng    = maxV - minV;
+  const toX    = i => (i / (closes.length - 1)) * W;
+  const toY    = v => H - ((v - minV) / rng) * H;
+  const pts    = closes.map((c, i) => `${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(" ");
+  const lx     = toX(closes.length - 1).toFixed(1);
+  const ly     = toY(closes[closes.length - 1]).toFixed(1);
+  const isPos  = closes[closes.length - 1] >= closes[0];
+  const col    = isPos ? "var(--pos)" : "var(--neg)";
+  const area   = `M0,${toY(closes[0]).toFixed(1)} `
+    + closes.slice(1).map((c, i) => `L${toX(i + 1).toFixed(1)},${toY(c).toFixed(1)}`).join(" ")
+    + ` L${W},${H} L0,${H} Z`;
+  const hline = (val, dash, stroke, width, op) => {
+    if (val == null) return "";
+    const y = Math.max(0.5, Math.min(H - 0.5, toY(val))).toFixed(1);
+    return `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${stroke}" stroke-width="${width}" stroke-dasharray="${dash}" opacity="${op}"/>`;
+  };
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" style="display:block">
+    <defs><linearGradient id="sg${t.id}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${col}" stop-opacity=".14"/>
+      <stop offset="100%" stop-color="${col}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#sg${t.id})"/>
+    ${hline(t.high_52w, "3 3", "#888", 1, ".45")}
+    ${hline(t.low_52w,  "3 3", "#888", 1, ".45")}
+    ${hline(t.ma200, "", "#1B4E8C", 1, ".70")}
+    ${hline(t.ma50,  "", "#3A82C4", 1, ".65")}
+    ${hline(t.ma20,  "", "#6EC6E6", 1, ".80")}
+    ${isPort ? hline(t.entry_price_manual, "", "#9B6DFF", 2, ".90") : ""}
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lx}" cy="${ly}" r="3" fill="${col}" stroke="var(--bg)" stroke-width="1.5"/>
+  </svg>`;
+}
+
+function maValueCol(t) {
+  const row = (lbl, val, color, bold) => {
+    if (val == null) return "";
+    const style = [color ? `color:${color}` : "", bold ? "font-weight:700" : ""].filter(Boolean).join(";");
+    return `<div class="tcard__maval-row"${style ? ` style="${style}"` : ""}>
+      <span class="tcard__maval-lbl">${lbl}</span>
+      <span class="tcard__maval-num">${numFmt(val, 2)}</span>
+    </div>`;
+  };
+  return `<div class="tcard__ma-vals">
+    ${row("MA20",  t.ma20,  "#6EC6E6")}
+    ${row("MA50",  t.ma50,  "#3A82C4")}
+    ${row("MA200", t.ma200, "#1B4E8C")}
+    ${row("52H",   t.high_52w,  null)}
+    ${row("52T",   t.low_52w,   null)}
+  </div>`;
+}
+
+function _cardBody(t) {
+  return `<div class="tcard__body">
+    <div class="tcard__chart">
+      <div class="tcard__chart-row">
+        <div class="tcard__spark">${sparkSVG(t)}</div>
+        ${maValueCol(t)}
+      </div>
+    </div>
+    <div class="tcard__metrics">
+      ${[rsiChip(t), volChip(t), trendChip(t)].filter(Boolean).map(h => `<div>${h}</div>`).join("")}
+    </div>
+  </div>`;
+}
+
+function cardDefault(t) {
+  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig is-trig--" + (t.alert_triggered_dir || "sell") : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
-      <span class="tcard__sep">|</span>${priceLine(t)}
-      <span class="tcard__sep">|</span>${maChip("MA20", t.ma20_delta_pct)}
-      <span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
+    <div class="tcard__hd">
+      <span class="tcard__sym">${t.symbol}</span>
+      ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
+      <div class="tcard__hd-right">
+        ${t.status_key !== "halten" ? statusIcon(t.status_key, t.status_label) : ""}
+        ${priceLine(t)}
+      </div>
     </div>
-    <div class="tcard__row">
-      ${trendChip(t)}<span class="tcard__sep">|</span>${rsiChip(t)}<span class="tcard__sep">|</span>${sentChip(t)}
-    </div>
+    ${_cardBody(t)}
     ${actionsRow(t)}
   </article>`;
 }
-function cardWatchlist(t) {
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
-    ${selectChip(t)}
-    <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
-      <span class="tcard__sep">|</span>${priceLine(t)}
-      <span class="tcard__sep">|</span>${maChip("MA20", t.ma20_delta_pct)}
-      <span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
-    </div>
-    <div class="tcard__row">
-      ${trendChip(t)}<span class="tcard__sep">|</span>${rsiChip(t)}<span class="tcard__sep">|</span>${sentChip(t)}
-    </div>
-    ${alertChips(t)}
-    ${actionsRow(t)}
-  </article>`;
-}
+
 function cardPortfolio(t) {
-  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig" : ""}" data-id="${t.id}">
+  const shares   = t.entry_shares != null ? `<span class="pill pill--sm">${numFmt(t.entry_shares, 0)}&thinsp;St.</span>` : "";
+  const invested = (t.entry_price_manual != null && t.entry_shares != null)
+    ? t.entry_price_manual * t.entry_shares : null;
+
+  // sub-row left: invested € | abs delta €
+  const subLeft = invested != null ? `
+    <span class="tcard__sub-inv"><span class="tcard__sub-lbl">€</span>${numFmt(invested, 0)}</span>
+    ${t.position_pl_abs != null ? `<span class="tcard__hd-sep">|</span><span class="${signCls(t.position_pl_abs)} tcard__sub-delta">${t.position_pl_abs >= 0 ? "+" : ""}${numFmt(t.position_pl_abs, 0)}€</span>` : ""}
+  ` : "";
+
+  // sub-row right: EP (purple) + P/L%
+  const subRight = t.entry_price_manual != null ? `
+    <span class="tcard__sub-ep">
+      <span class="tcard__sub-lbl tcard__ep-lbl">EP</span>
+      <span class="tcard__ep-val">${numFmt(t.entry_price_manual)}€</span>
+      <span class="${signCls(t.performance_pct)}">${pctFmt(t.performance_pct)}</span>
+    </span>
+  ` : "";
+
+  return `<article class="tcard has-select ${t.alert_triggered ? "is-trig is-trig--" + (t.alert_triggered_dir || "sell") : ""}" data-id="${t.id}">
     ${selectChip(t)}
-    ${t.alert_triggered ? '<span class="tcard__warn" title="Alert ausgelöst">!</span>' : ""}
-    <div class="tcard__row">
-      <span class="tcard__sym">${t.symbol}</span>${t.name ? ` <span class="tcard__name">${t.name}</span>` : ""}
-      <span class="tcard__sep">|</span>${plChip(t)}
-      <span class="tcard__sep">|</span><span><span class="tcard__label">Preis</span>${numFmt(t.price)} <span class="${signCls(t.day_change_pct)}">(${pctFmt(t.day_change_pct)})</span></span>
+    <div class="tcard__hd">
+      <span class="tcard__sym">${t.symbol}</span>
+      ${t.name ? `<span class="tcard__name">${t.name}</span>` : ""}
+      ${shares}
+      <div class="tcard__hd-right">
+        ${t.status_key !== "halten" ? statusIcon(t.status_key, t.status_label) : ""}
+        ${priceLine(t)}
+      </div>
     </div>
-    <div class="tcard__row">
-      ${trendChip(t)}<span class="tcard__sep">|</span>${rsiChip(t)}<span class="tcard__sep">|</span>${sentChip(t)}
-    </div>
-    <div class="tcard__row">
-      ${maChip("MA20", t.ma20_delta_pct)}<span class="tcard__sep">|</span>${maChip("MA200", t.ma200_delta_pct)}
-      ${t.alerts && t.alerts.length ? '<span class="tcard__sep">|</span>' + alertChips(t, true) : ""}
-    </div>
+    ${subLeft || subRight ? `<div class="tcard__price-sub">
+      <span class="tcard__sub-left">${subLeft}</span>
+      <span class="tcard__sub-right">${subRight}</span>
+    </div>` : ""}
+    ${_cardBody(t)}
     ${actionsRow(t)}
   </article>`;
 }
@@ -1063,8 +1304,32 @@ function renderCards() {
     if (window.lucide) lucide.createIcons();
     return;
   }
-  const tpl = bucket === "watchlist" ? cardWatchlist : bucket === "portfolio" ? cardPortfolio : cardNeutral;
-  host.innerHTML = rows.map(tpl).join("");
+  const tpl = bucket === "portfolio" ? cardPortfolio : cardDefault;
+  const selSet = new Set(Store.state.ui.selected);
+  const visIds = rows.map(r => r.id);
+  const selCount = visIds.filter(id => selSet.has(id)).length;
+  const allSel = selCount === visIds.length && visIds.length > 0;
+  const someSel = selCount > 0 && !allSel;
+  const headHtml = `<div class="card-list__head">
+    <label class="card-list__select">
+      <input type="checkbox" id="cards-select-all" ${allSel ? "checked" : ""} aria-label="Alle wählen / Auswahl aufheben" />
+      ${selCount > 0 ? `<span>${selCount} gewählt</span>` : ""}
+    </label>
+  </div>`;
+  host.innerHTML = headHtml + rows.map(tpl).join("");
+  const selAll = $("#cards-select-all");
+  if (selAll) {
+    selAll.indeterminate = someSel;
+    selAll.addEventListener("click", e => {
+      e.stopPropagation();
+      const shouldSelectAll = selCount === 0;
+      let sel = Store.state.ui.selected.filter(id => !visIds.includes(id));
+      if (shouldSelectAll) sel = [...sel, ...visIds];
+      Store.patchUi({ selected: sel });
+      renderCards();
+      Render.bulkbar();
+    });
+  }
 
   host.querySelectorAll(".btn-info").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openInfo(e.currentTarget.dataset.id); }));
   host.querySelectorAll(".btn-edit").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openEdit(e.currentTarget.dataset.id); }));
@@ -1101,6 +1366,96 @@ function toast(msg, kind = "") {
   el.textContent = msg;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.remove(), 2400);
+}
+
+/* ─── benchmark bar ─── */
+function renderBenchBar() {
+  const el = $("#benchbar"); if (!el) return;
+  const benchmarks = Store.state.benchmarks;
+
+  function pctSpan(v) {
+    if (v == null) return `<span class="bench__na">—</span>`;
+    const cls = v >= 0 ? "pos" : "neg";
+    return `<span class="bench__pct bench__pct--${cls}">${v >= 0 ? "+" : ""}${v.toFixed(1)}%</span>`;
+  }
+
+  function trendSegs(closes) {
+    if (!closes || closes.length < 2)
+      return Array.from({ length: 5 }, () => `<span class="bench__seg bench__seg--flat"></span>`).join("");
+    const slice = closes.slice(0, 6);
+    return Array.from({ length: Math.min(5, slice.length - 1) }, (_, i) => {
+      const cls = slice[i] >= slice[i + 1] ? "up" : "dn";
+      return `<span class="bench__seg bench__seg--${cls}"></span>`;
+    }).join("");
+  }
+
+  function itemHtml(b) {
+    const price = b.price != null ? b.price.toLocaleString("de-DE", { maximumFractionDigits: 0 }) : "—";
+    return `<div class="bench__item">
+      <div class="bench__item-top">
+        <span class="bench__label">${b.label}</span>
+        <span class="bench__price">${price}</span>
+        <span class="bench__segs">${trendSegs(b.closes)}</span>
+      </div>
+      <div class="bench__item-bot">
+        <span class="bench__tf"><span class="bench__tf-lbl">1T</span>${pctSpan(b.day_change_pct)}</span>
+        <span class="bench__tf"><span class="bench__tf-lbl">1W</span>${pctSpan(b.week_change_pct)}</span>
+        <span class="bench__tf"><span class="bench__tf-lbl">1M</span>${pctSpan(b.month_change_pct)}</span>
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = `
+    <div class="bench__scroll">
+      ${benchmarks.map(itemHtml).join('<span class="bench__divider"></span>')}
+    </div>
+    <button class="bench__gear" id="btn-bench-refresh" title="Benchmarks aktualisieren" aria-label="Benchmarks aktualisieren">
+      <i data-lucide="refresh-cw" class="icon icon-sm"></i>
+    </button>
+    <button class="bench__gear" id="btn-bench-settings" title="Benchmark-Einstellungen" aria-label="Benchmark-Einstellungen">
+      <i data-lucide="settings-2" class="icon icon-sm"></i>
+    </button>`;
+
+  $("#btn-bench-refresh") ?.addEventListener("click", async e => {
+    const btn = e.currentTarget;
+    btn.classList.add("is-loading"); btn.disabled = true;
+    await API.fetchBenchmarks();
+    btn.classList.remove("is-loading"); btn.disabled = false;
+  });
+  $("#btn-bench-settings")?.addEventListener("click", openBenchSettings);
+  if (window.lucide) lucide.createIcons();
+}
+
+function openBenchSettings() {
+  const benchmarks = Store.state.benchmarks;
+  $("#bench-settings-list").innerHTML = benchmarks.map((b, i) => `
+    <div class="modal__row2">
+      <div class="modal__field">
+        <label>Label</label>
+        <input class="bench-cfg-label" data-idx="${i}" type="text" value="${b.label}" placeholder="z.B. DAX" maxlength="8" />
+      </div>
+      <div class="modal__field">
+        <label>Yahoo-Symbol</label>
+        <input class="bench-cfg-sym" data-idx="${i}" type="text" value="${b.symbol || ""}" placeholder="z.B. ^GDAXI" />
+      </div>
+    </div>`).join("");
+  openModal("#modal-bench");
+}
+
+function saveBenchSettings() {
+  const benchmarks = Store.state.benchmarks;
+  $$(".bench-cfg-label").forEach(el => {
+    const i = +el.dataset.idx;
+    const v = el.value.trim(); if (v) benchmarks[i].label = v;
+  });
+  $$(".bench-cfg-sym").forEach(el => {
+    const i = +el.dataset.idx;
+    const v = el.value.trim(); if (v) benchmarks[i].symbol = v;
+  });
+  Store.save();
+  closeModal("#modal-bench");
+  renderBenchBar();
+  toast("Gespeichert", "pos");
 }
 
 /* ─── modal open/close ─── */
@@ -1140,7 +1495,7 @@ function openInfo(id) {
     <div class="modal__field"><label>Sentiment / Trend</label><div>${c.sentiment || "—"} · ${numFmt(c.sentiment_score, 2)} · ${c.trend_strength || "—"}</div></div>
     <div class="modal__field"><label>Quote-Zeitpunkt</label><div>${t.quotes.ts ? new Date(t.quotes.ts).toLocaleString("de-DE") : "—"} · Quelle: ${t.quotes._source || "—"}</div></div>
   `;
-  if (typeof PROMPTS !== "undefined") updatePromptText();
+  if (typeof window.PROMPTS !== "undefined") updatePromptText();
   openModal("#modal-info");
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
@@ -1159,7 +1514,7 @@ function openEdit(id) {
   $("#edit-td-mic").value    = t.stamm.twelvedata_mic_code || "";
   $("#edit-yahoo-symbol").value = t.stamm.yahoo_symbol || "";
   $("#edit-tv-url").value = t.stamm.tradingview_url || "";
-  $("#edit-st-url").value = t.stamm.stocktwits_url || "";
+  $("#edit-st-url").value = t.stamm.stocktwits_url || `https://stocktwits.com/symbol/${t.stamm.symbol}`;
   /* show guessed Yahoo-symbol as placeholder for unconfigured tickers */
   $("#edit-yahoo-symbol").placeholder = `Vorgeschlagen: ${API._guessYahooSymbol(t) || "—"}`;
   /* reset lookup UI */
@@ -1173,7 +1528,50 @@ function openEdit(id) {
   if (isPortfolio) renderTradeEditor(t.user.trades || []);
   openModal("#modal-edit");
 }
-const ALERT_NO_THRESHOLD = new Set(["ma20_below","ma50_below","ma200_below","macd_bullish","macd_bearish","reversal_up_short","reversal_down_short","reversal_up_long","reversal_down_long"]);
+/* ALERT_NO_THRESHOLD, ALERT_DEFAULT_DIR, alertDir — imported from lib/status-logic.js */
+
+/* A6: distance to trigger — pct>0 = not yet, pct<0 = past trigger, near = within 5% */
+function alertDistance(a, q) {
+  if (!a || !q) return { pct: null, near: false };
+  const within = (p, lim) => Math.abs(p) <= lim;
+  const calc = (current, target, lim) => {
+    if (current == null || target == null || target === 0) return { pct: null, near: false };
+    const pct = ((current - target) / Math.abs(target)) * 100;
+    return { pct, near: within(pct, lim) };
+  };
+  switch (a.type) {
+    case "price_below": return calc(q.price, a.threshold, 5);
+    case "price_above": return calc(a.threshold, q.price, 5);
+    case "rsi_below":   return q.rsi != null && a.threshold != null
+      ? { pct: q.rsi - a.threshold, near: within(q.rsi - a.threshold, 5) } : { pct: null, near: false };
+    case "rsi_above":   return q.rsi != null && a.threshold != null
+      ? { pct: a.threshold - q.rsi, near: within(a.threshold - q.rsi, 5) } : { pct: null, near: false };
+    case "ma20_below":  return calc(q.price, q.ma20,  3);
+    case "ma50_below":  return calc(q.price, q.ma50,  3);
+    case "ma200_below": return calc(q.price, q.ma200, 3);
+    case "ma_below_pct": {
+      const mv = a.ma ? q[a.ma] : null;
+      if (mv == null || a.threshold == null) return { pct: null, near: false };
+      return calc(q.price, mv * (1 - a.threshold / 100), 5);
+    }
+    case "ma_above_pct": {
+      const mv = a.ma ? q[a.ma] : null;
+      if (mv == null || a.threshold == null) return { pct: null, near: false };
+      return calc(mv * (1 + a.threshold / 100), q.price, 5);
+    }
+    case "perf_below": {
+      if (q._perf_pct == null || a.threshold == null) return { pct: null, near: false };
+      const d = q._perf_pct + Math.abs(a.threshold); // positiv = noch X pp bis −threshold
+      return { pct: d, near: within(d, 3) };
+    }
+    case "perf_above": {
+      if (q._perf_pct == null || a.threshold == null) return { pct: null, near: false };
+      const d = Math.abs(a.threshold) - q._perf_pct; // positiv = noch X pp bis +threshold
+      return { pct: d, near: within(d, 3) };
+    }
+    default: return { pct: null, near: false };
+  }
+}
 
 function renderAlertEditor(alerts, t) {
   const host = $("#edit-alerts-list");
@@ -1182,13 +1580,19 @@ function renderAlertEditor(alerts, t) {
   host.innerHTML = alerts.map((a, i) => {
     const noTh    = ALERT_NO_THRESHOLD.has(a.type);
     const needsMa = MA_PCT.has(a.type);
-    const pholder = needsMa ? "% Abstand" : "Schwelle";
+    const isVol   = a.type === "vol_spike";
+    const isPerf  = a.type === "perf_below" || a.type === "perf_above";
+    const pholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : isPerf ? "% (z.B. 10)" : "Schwelle";
+    const defVal  = a.threshold ?? (needsMa ? 20 : isVol ? 2 : isPerf ? 10 : "");
     const maVal   = a.ma || "ma50";
-    return `<div class="alert-row" data-idx="${i}">
+    const dir     = alertDir(a);
+    const prevGrp = i > 0 ? alerts[i - 1].group : null;
+    const linked  = i > 0 && a.group && prevGrp === a.group;
+    return `<div class="alert-row" data-idx="${i}" data-group="${a.group || ""}">
       <div class="alert-row__main">
         <select class="al-type">
-          <option value="price_below"         ${a.type==="price_below"        ?"selected":""}>Preis ≤ (SL/Buy)</option>
-          <option value="price_above"         ${a.type==="price_above"        ?"selected":""}>Preis ≥ (Sell/TP)</option>
+          <option value="price_below"         ${a.type==="price_below"        ?"selected":""}>Preis ≤</option>
+          <option value="price_above"         ${a.type==="price_above"        ?"selected":""}>Preis ≥</option>
           <option value="ma_below_pct"        ${a.type==="ma_below_pct"       ?"selected":""}>Preis ≤ MA −X%</option>
           <option value="ma_above_pct"        ${a.type==="ma_above_pct"       ?"selected":""}>Preis ≥ MA +X%</option>
           <option value="rsi_above"           ${a.type==="rsi_above"          ?"selected":""}>RSI ≥</option>
@@ -1199,13 +1603,24 @@ function renderAlertEditor(alerts, t) {
           <option value="reversal_down_short" ${a.type==="reversal_down_short"?"selected":""}>Trendwende ↓ kurzfristig (MACD)</option>
           <option value="reversal_up_long"    ${a.type==="reversal_up_long"   ?"selected":""}>Trendwende ↑ langfristig (MA200)</option>
           <option value="reversal_down_long"  ${a.type==="reversal_down_long" ?"selected":""}>Trendwende ↓ langfristig (MA200)</option>
+          <option value="vol_spike"           ${a.type==="vol_spike"          ?"selected":""}>Volumen Spike ≥ N×Ø</option>
+          <option value="perf_below"          ${a.type==="perf_below"         ?"selected":""}>Perf. ≤ −X%</option>
+          <option value="perf_above"          ${a.type==="perf_above"         ?"selected":""}>Perf. ≥ +X% 💰</option>
         </select>
         <select class="al-ma" ${needsMa ? "" : "hidden"}>
           <option value="ma20"  ${maVal==="ma20" ?"selected":""}>MA20</option>
           <option value="ma50"  ${maVal==="ma50" ?"selected":""}>MA50</option>
           <option value="ma200" ${maVal==="ma200"?"selected":""}>MA200</option>
         </select>
-        <input class="al-th" type="number" step="any" value="${a.threshold ?? (needsMa ? 20 : "")}" placeholder="${pholder}" ${noTh?"hidden":""} />
+        <input class="al-th" type="number" step="any" value="${defVal}" placeholder="${pholder}" ${noTh?"hidden":""} />
+        <select class="al-dir" title="Richtung Buy/Sell/Watch">
+          <option value="buy"   ${dir==="buy"  ?"selected":""}>Buy</option>
+          <option value="sell"  ${dir==="sell" ?"selected":""}>Sell</option>
+          <option value="watch" ${dir==="watch"?"selected":""}>Watch</option>
+        </select>
+        ${i > 0 ? `<label class="al-link" title="Mit vorherigem Alert per AND verknüpfen">
+          <input type="checkbox" class="al-and" ${linked ? "checked" : ""}/>&amp;
+        </label>` : `<span class="al-link al-link--placeholder"></span>`}
         <button class="al-del" aria-label="Alert löschen"><i data-lucide="x" class="icon icon-sm"></i></button>
       </div>
     </div>`;
@@ -1217,27 +1632,50 @@ function renderAlertEditor(alerts, t) {
       const row     = sel.closest(".alert-row");
       const noTh    = ALERT_NO_THRESHOLD.has(sel.value);
       const needsMa = MA_PCT.has(sel.value);
+      const isVol   = sel.value === "vol_spike";
+      const isPerf  = sel.value === "perf_below" || sel.value === "perf_above";
       const thEl = row.querySelector(".al-th");
       thEl.hidden      = noTh;
-      thEl.placeholder = needsMa ? "% Abstand" : "Schwelle";
+      thEl.placeholder = needsMa ? "% Abstand" : isVol ? "Faktor (z.B. 2)" : isPerf ? "% (z.B. 10)" : "Schwelle";
       if (needsMa && !thEl.value) thEl.value = 20;
+      if (isVol   && !thEl.value) thEl.value = 2;
+      if (isPerf  && !thEl.value) thEl.value = 10;
       row.querySelector(".al-ma").hidden = !needsMa;
+      /* auto-update direction default when type changes */
+      const dirSel = row.querySelector(".al-dir");
+      if (dirSel) dirSel.value = ALERT_DEFAULT_DIR[sel.value] || "watch";
     });
   });
   if (window.lucide) lucide.createIcons();
 }
 
 function collectAlertsFromEditor() {
-  return $$("#edit-alerts-list .alert-row").map(row => {
-    const type  = row.querySelector(".al-type").value;
-    const maEl  = row.querySelector(".al-ma");
-    const ma    = (maEl && !maEl.hidden) ? maEl.value : undefined;
-    const extra = ma !== undefined ? { ma } : {};
-    if (ALERT_NO_THRESHOLD.has(type)) return { type, threshold: null, ...extra };
+  const rows = $$("#edit-alerts-list .alert-row");
+  const out = [];
+  let currentGroup = null;
+  rows.forEach((row, i) => {
+    const type   = row.querySelector(".al-type").value;
+    const maEl   = row.querySelector(".al-ma");
+    const ma     = (maEl && !maEl.hidden) ? maEl.value : undefined;
+    const dir    = row.querySelector(".al-dir")?.value || ALERT_DEFAULT_DIR[type] || "watch";
+    const linked = i > 0 && row.querySelector(".al-and")?.checked;
+    let group;
+    if (linked) {
+      if (!currentGroup) currentGroup = `g_${Date.now()}_${i}`;
+      group = currentGroup;
+      /* propagate group back to previous row's alert if not yet grouped */
+      const prev = out[out.length - 1];
+      if (prev && !prev.group) prev.group = currentGroup;
+    } else {
+      currentGroup = null;
+    }
+    const base = { type, dir, ...(ma !== undefined ? { ma } : {}), ...(group ? { group } : {}) };
+    if (ALERT_NO_THRESHOLD.has(type)) { out.push({ ...base, threshold: null }); return; }
     const th = row.querySelector(".al-th").value;
-    if (th === "" || isNaN(+th)) return null;
-    return { type, threshold: +th, ...extra };
-  }).filter(Boolean);
+    if (th === "" || isNaN(+th)) return;
+    out.push({ ...base, threshold: +th });
+  });
+  return out;
 }
 
 function renderTradeEditor(trades) {
@@ -1357,7 +1795,7 @@ function renderArchiveView() {
   const thArrow = key => key === _archSort.col ? (_archSort.dir === 1 ? " ↑" : " ↓") : "";
   host.innerHTML = `
     <div class="arch-summary">
-      <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${(totalPl >= 0 ? "+" : "") + numFmt(totalPl)} €</span>
+      <span>Realisiert gesamt: <span class="${signCls(totalPl)}">${signedNum(totalPl, 0, "€")}</span>
         <span class="dim" style="font-size:var(--fs-l);margin-left:6px">${entries.length} Verkäufe</span>
       </span>
       <button class="btn-text" id="btn-arch-csv" style="margin-left:auto">
@@ -1374,7 +1812,7 @@ function renderArchiveView() {
         <td>${numFmt(tr.price)}</td>
         <td>${tr.shares != null ? numFmt(tr.shares, 0) : "—"}</td>
         <td class="dim">${avgCost != null ? numFmt(avgCost) : "—"}</td>
-        <td class="${signCls(pl_abs)}">${pl_abs != null ? (pl_abs >= 0 ? "+" : "") + numFmt(pl_abs) + " €" : "—"}</td>
+        <td class="${signCls(pl_abs)}">${pl_abs != null ? signedNum(pl_abs, 0, "€") : "—"}</td>
       </tr>`).join("")}
       </tbody>
     </table>`;
@@ -1425,13 +1863,32 @@ function saveEdit() {
   t.user.alerts = collectAlertsFromEditor();
   if (t.user.bucket === "portfolio") {
     t.user.trades = collectTradesFromEditor();
-    const buys  = (t.user.trades || []).filter(tr => tr.type === "buy"  && tr.price != null && tr.shares != null);
-    const sells = (t.user.trades || []).filter(tr => tr.type === "sell" && tr.shares != null);
-    const totalBuyShares  = buys.reduce((s, tr) => s + tr.shares, 0);
-    const totalSellShares = sells.reduce((s, tr) => s + tr.shares, 0);
-    if (totalBuyShares > 0) {
-      t.user.entry_price_manual = +(buys.reduce((s, tr) => s + tr.price * tr.shares, 0) / totalBuyShares).toFixed(4);
-      t.user.entry_shares = +(totalBuyShares - totalSellShares).toFixed(4);
+    // Chronological running cost basis — handles position close + reopen correctly
+    const sorted = [...(t.user.trades || [])].sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1; if (!b.date) return -1;
+      return a.date.localeCompare(b.date);
+    });
+    let runningShares = 0, runningCost = 0;
+    sorted.forEach(tr => {
+      if (tr.type === "buy" && tr.price != null && tr.shares != null) {
+        runningShares += tr.shares;
+        runningCost   += tr.price * tr.shares;
+      } else if (tr.type === "sell" && tr.shares != null) {
+        const sold = Math.min(tr.shares, runningShares);
+        if (runningShares > 0) {
+          runningCost   -= (runningCost / runningShares) * sold;
+          runningShares -= sold;
+        }
+        if (runningShares <= 0) { runningShares = 0; runningCost = 0; }
+      }
+    });
+    if (runningShares > 0) {
+      t.user.entry_price_manual = +(runningCost / runningShares).toFixed(4);
+      t.user.entry_shares = +runningShares.toFixed(4);
+    } else {
+      t.user.entry_price_manual = null;
+      t.user.entry_shares = 0;
     }
   }
   _autoInitTrade(t);
@@ -1458,7 +1915,7 @@ function openNachkauf(id) {
   $("#modal-nk-title").textContent = `${t.stamm.symbol} · Kalkulator`;
   const entry  = t.user.entry_price_manual;
   const shares = t.user.entry_shares;
-  const price  = t.quotes.price;
+  const price  = flat(t).price; // EUR-konvertiert
   $("#nk-context").innerHTML = `Einstand <b>${entry != null ? numFmt(entry) : "—"}</b> · Stück <b>${shares != null ? numFmt(shares, 0) : "—"}</b> · Live <b>${numFmt(price)}</b>`;
   $("#nk-type").value  = "buy";
   $("#nk-pct").value   = CONFIG.defaults.nkPct;
@@ -1495,7 +1952,7 @@ function recomputeNachkauf() {
     const newShares = shares + addShares;
     const newValue  = oldValue + addValue;
     const newAvg    = newValue / newShares;
-    const liveValue = t.quotes.price != null ? newShares * t.quotes.price : null;
+    const liveValue = flat(t).price != null ? newShares * flat(t).price : null;
     const newPL     = liveValue != null ? liveValue - newValue : null;
     out.innerHTML = `
       <div class="nk-out__row"><span class="nk-out__lbl">+ Investiert</span><span class="nk-out__val">${numFmt(addValue)}</span></div>
@@ -1512,7 +1969,7 @@ function recomputeNachkauf() {
     const remainShares  = shares - sellShares;
     const costBase      = entry != null ? entry * shares : null;
     const pl            = costBase != null ? proceeds - (entry * sellShares) : null;
-    const liveRemain    = t.quotes.price != null ? remainShares * t.quotes.price : null;
+    const liveRemain    = flat(t).price != null ? remainShares * flat(t).price : null;
     out.innerHTML = `
       <div class="nk-out__row"><span class="nk-out__lbl">Verkauf Stück</span><span class="nk-out__val">${numFmt(sellShares, 4)}</span></div>
       <div class="nk-out__row"><span class="nk-out__lbl">Erlös</span><span class="nk-out__val">${numFmt(proceeds)}</span></div>
@@ -1735,55 +2192,26 @@ function bulkDelete() {
 async function refreshOne(id) {
   const t = Store.byId(id); if (!t) return;
   try {
+    await API.fetchEurUsd();
     await API.refreshOne(t);
     Calc.recompute(t); Store.save(); Render.bucket();
     toast(`${t.stamm.symbol} aktualisiert`, "pos");
   } catch (err) { toast("Refresh fehlgeschlagen: " + err.message, "neg"); }
 }
-/* Generic refresh runner: takes a refreshFn returning { ok, failed } */
-async function runRefresh(refreshFn, list, label) {
-  if (!list.length) { toast("Nichts zu aktualisieren", "neg"); return; }
-  setRefreshLoading(true);
-  try {
-    const res = await refreshFn(list);
-    list.forEach(Calc.recompute);
-    Store.save();
-    Render.bucket();
-    if (res.failed.length === 0) {
-      toast(`${res.ok} ${label}`, "pos");
-    } else if (res.ok === 0) {
-      const firstErr = res.failed[0];
-      toast(`Fehlgeschlagen: ${firstErr.symbol} — ${firstErr.error}`, "neg");
-      console.warn("[refresh] all failed", res.failed);
-    } else {
-      toast(`${res.ok} ${label}, ${res.failed.length} fehlgeschlagen (${res.failed.slice(0,3).map(f=>f.symbol).join(", ")}${res.failed.length>3?"…":""})`, "neg");
-      console.warn("[refresh] partial", res.failed);
-    }
-  } catch (err) {
-    toast("Refresh fehlgeschlagen: " + err.message, "neg");
-    console.warn("[refresh] fatal", err);
-  } finally { setRefreshLoading(false); }
-}
-const refreshList     = (list, label) => runRefresh(API.refreshMany,     list, label);
-const refreshListFull = (list, label) => runRefresh(API.refreshFullMany, list, label);
-const refreshBucket = b => refreshList(Store.state.tickers.filter(t => t.user.bucket === b), `${b} aktualisiert`);
-const refreshAll    = () => refreshList(Store.state.tickers, "Einträge aktualisiert");
-/* Smart bulk-refresh: with selection → only selected; empty selection → full current bucket */
+/* Bulk-Bar refresh (requires selection):
+   ⟳  → Yahoo flat + TD flat — nur Kurs/Day-Change
+   ⟳↓ → Yahoo full + TD full — Kurs + Historie/Indikatoren */
 function bulkRefresh() {
   const ui = Store.state.ui;
-  if (ui.selected.length > 0) {
-    refreshList(Store.state.tickers.filter(t => ui.selected.includes(t.id)), "ausgewählte aktualisiert");
-  } else {
-    refreshList(Store.state.tickers.filter(t => t.user.bucket === ui.bucket), `${ui.bucket} aktualisiert`);
-  }
+  if (!ui.selected.length) { toast("Keine Auswahl", "neg"); return; }
+  const list = Store.state.tickers.filter(t => ui.selected.includes(t.id));
+  smartRefresh({ scope: "selected", tickers: list, tdMode: "flat", yahooMode: "flat", clearSel: true });
 }
 function bulkRefreshFull() {
   const ui = Store.state.ui;
-  if (ui.selected.length > 0) {
-    refreshListFull(Store.state.tickers.filter(t => ui.selected.includes(t.id)), "ausgewählte vollständig aktualisiert");
-  } else {
-    refreshListFull(Store.state.tickers.filter(t => t.user.bucket === ui.bucket), `${ui.bucket} vollständig aktualisiert`);
-  }
+  if (!ui.selected.length) { toast("Keine Auswahl", "neg"); return; }
+  const list = Store.state.tickers.filter(t => ui.selected.includes(t.id));
+  smartRefresh({ scope: "selected", tickers: list, tdMode: "full", yahooMode: "full", clearSel: true });
 }
 
 function setRefreshLoading(on) {
@@ -1800,40 +2228,83 @@ function openAlertsOverview() {
   const items = [];
   for (const t of tickers) {
     const trigs = (t.calculations && t.calculations.smart_alerts) || [];
-    for (const a of trigs) {
-      items.push({ t, a });
-    }
+    if (!trigs.length) continue;
+    const rate  = Store.state.config.eur_usd;
+    const ccy   = t.quotes?.currency_returned || t.stamm?.currency || "";
+    const toEur = v => (ccy === "USD" && rate && v != null) ? +(v / rate).toFixed(4) : v;
+    const eq = {
+      ...t.quotes,
+      price: toEur(t.quotes?.price),
+      ma20:  toEur(t.quotes?.ma20),
+      ma50:  toEur(t.quotes?.ma50),
+      ma200: toEur(t.quotes?.ma200),
+      _perf_pct: t.calculations?.trends?.performance_pct ?? null,
+    };
+    for (const a of trigs) items.push({ t, a, dir: alertDir(a), dist: alertDistance(a, eq), eq });
   }
-  // sort: triggered first
-  items.sort((x, y) => (y.a._trig ? 1 : 0) - (x.a._trig ? 1 : 0));
-  const lblMap = { price_below:"Preis ≤", price_above:"Preis ≥", rsi_above:"RSI ≥", rsi_below:"RSI ≤", ma20_below:"Preis ≤ MA20", ma50_below:"Preis ≤ MA50", ma200_below:"Preis ≤ MA200", macd_bullish:"MACD bullisch", macd_bearish:"MACD bärisch", reversal_up_short:"Trendwende ↑ kurzfristig", reversal_down_short:"Trendwende ↓ kurzfristig", reversal_up_long:"Trendwende ↑ langfristig", reversal_down_long:"Trendwende ↓ langfristig" };
+  /* sort: triggered → near → others */
+  items.sort((x, y) => {
+    if (x.a._trig !== y.a._trig) return x.a._trig ? -1 : 1;
+    if (x.dist.near !== y.dist.near) return x.dist.near ? -1 : 1;
+    const dx = x.dist.pct == null ? Infinity : Math.abs(x.dist.pct);
+    const dy = y.dist.pct == null ? Infinity : Math.abs(y.dist.pct);
+    return dx - dy;
+  });
   const body = $("#modal-alerts-body");
   if (!items.length) {
     body.innerHTML = `<div class="alert-overview__empty">Keine Alerts definiert</div>`;
-  } else {
-    body.innerHTML = `<div class="alert-overview">${items.map(({t,a}) => {
-      let typeLabel, valLabel;
-      if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
-        const maName = (a.ma || "ma50").toUpperCase();
-        const sign   = a.type === "ma_above_pct" ? "+" : "−";
-        typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
-        const maVal = a.ma ? t.quotes[a.ma] : null;
-        const absPrice = maVal != null && a.threshold != null
-          ? +(maVal * (a.type==="ma_above_pct" ? (1 + a.threshold/100) : (1 - a.threshold/100))).toFixed(2)
-          : null;
-        valLabel = absPrice != null ? numFmt(absPrice) : "—";
-      } else {
-        typeLabel = lblMap[a.type] || a.type;
-        valLabel  = numFmt(a.threshold);
-      }
-      return `
-      <div class="alert-overview__item ${a._trig ? "is-trig" : ""}">
-        <span class="alert-overview__sym">${t.stamm.symbol}</span>
-        <span class="alert-overview__type">${typeLabel}</span>
-        <span class="alert-overview__val">${valLabel} ${a._trig ? "· ⚠ ausgelöst" : ""}</span>
-      </div>`;
-    }).join("")}</div>`;
+    openModal("#modal-alerts"); return;
   }
+  const groups = { buy: [], sell: [], watch: [] };
+  items.forEach(it => (groups[it.dir] || groups.watch).push(it));
+  const sectionLbl = { buy: "Buy-Signale", sell: "Sell-Signale", watch: "Beobachten" };
+
+  const renderItem = ({ t, a, dir, dist, eq }) => {
+    let typeLabel, valLabel, unit = "%";
+    if (a.type === "price_below")        { typeLabel = "Preis ≤";      valLabel = numFmt(a.threshold); }
+    else if (a.type === "price_above")   { typeLabel = "Preis ≥";      valLabel = numFmt(a.threshold); }
+    else if (a.type === "perf_below")    { typeLabel = `Perf ≤ −${a.threshold}%`; valLabel = eq._perf_pct != null ? `aktuell ${eq._perf_pct >= 0 ? "+" : ""}${eq._perf_pct.toFixed(1)}%` : "—"; unit = "pp"; }
+    else if (a.type === "perf_above")    { typeLabel = `Perf ≥ +${a.threshold}%`; valLabel = eq._perf_pct != null ? `aktuell ${eq._perf_pct >= 0 ? "+" : ""}${eq._perf_pct.toFixed(1)}%` : "—"; unit = "pp"; }
+    else if (a.type === "rsi_below")     { typeLabel = "RSI ≤"; valLabel = `${a.threshold} (aktuell ${eq.rsi != null ? eq.rsi.toFixed(0) : "—"})`; unit = "pp"; }
+    else if (a.type === "rsi_above")     { typeLabel = "RSI ≥"; valLabel = `${a.threshold} (aktuell ${eq.rsi != null ? eq.rsi.toFixed(0) : "—"})`; unit = "pp"; }
+    else if (a.type === "ma20_below")    { typeLabel = "Preis ≤ MA20";  valLabel = eq.ma20  != null ? numFmt(eq.ma20)  : "—"; }
+    else if (a.type === "ma50_below")    { typeLabel = "Preis ≤ MA50";  valLabel = eq.ma50  != null ? numFmt(eq.ma50)  : "—"; }
+    else if (a.type === "ma200_below")   { typeLabel = "Preis ≤ MA200"; valLabel = eq.ma200 != null ? numFmt(eq.ma200) : "—"; }
+    else if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
+      const maName = (a.ma || "ma50").toUpperCase();
+      const sign   = a.type === "ma_above_pct" ? "+" : "−";
+      typeLabel = `Preis ${a.type==="ma_above_pct"?"≥":"≤"} ${maName} ${sign}${a.threshold}%`;
+      const mv  = a.ma ? eq[a.ma] : null;
+      const abs = mv != null ? +(mv * (a.type==="ma_above_pct" ? 1 + a.threshold/100 : 1 - a.threshold/100)).toFixed(2) : null;
+      valLabel  = abs != null ? numFmt(abs) : "—";
+    }
+    else if (a.type === "macd_bullish")  { typeLabel = "MACD bullisch"; valLabel = eq.macd_histogram != null ? `Hist ${eq.macd_histogram >= 0 ? "+" : ""}${eq.macd_histogram.toFixed(3)}` : "—"; }
+    else if (a.type === "macd_bearish")  { typeLabel = "MACD bärisch";  valLabel = eq.macd_histogram != null ? `Hist ${eq.macd_histogram >= 0 ? "+" : ""}${eq.macd_histogram.toFixed(3)}` : "—"; }
+    else if (a.type === "reversal_up_short")   { typeLabel = "Trendwende ↑ kurzfristig (MACD)";  valLabel = "—"; }
+    else if (a.type === "reversal_down_short") { typeLabel = "Trendwende ↓ kurzfristig (MACD)";  valLabel = "—"; }
+    else if (a.type === "reversal_up_long")    { typeLabel = "Trendwende ↑ langfristig (MA200)"; valLabel = "—"; }
+    else if (a.type === "reversal_down_long")  { typeLabel = "Trendwende ↓ langfristig (MA200)"; valLabel = "—"; }
+    else if (a.type === "vol_spike")     { typeLabel = "Volumen Spike ≥"; valLabel = a.threshold != null ? `${a.threshold}×Ø` : "—"; }
+    else                                 { typeLabel = a.type; valLabel = numFmt(a.threshold); }
+
+    const distLbl = a._trig
+      ? `<span class="alert-overview__status is-trig">⚠ ausgelöst</span>`
+      : dist.pct != null
+        ? `<span class="alert-overview__status ${dist.near ? "is-near" : "dim"}">${dist.pct >= 0 ? "+" : ""}${dist.pct.toFixed(1)} ${unit}</span>`
+        : "";
+    const grp = a.group ? `<span class="alert-overview__grp" title="AND-Gruppe">&</span>` : "";
+    return `<div class="alert-overview__item alert-overview__item--${dir} ${a._trig ? "is-trig" : ""}">
+      <span class="alert-overview__sym">${t.stamm.symbol}${grp}</span>
+      <span class="alert-overview__type">${typeLabel}</span>
+      <span class="alert-overview__val">${valLabel}</span>
+      ${distLbl}
+    </div>`;
+  };
+  body.innerHTML = ["buy","sell","watch"].filter(k => groups[k].length).map(k => `
+    <div class="alert-overview__section alert-overview__section--${k}">
+      <div class="alert-overview__head">${sectionLbl[k]} <span class="dim">· ${groups[k].length}</span></div>
+      ${groups[k].map(renderItem).join("")}
+    </div>`).join("");
   openModal("#modal-alerts");
 }
 
@@ -1905,6 +2376,9 @@ async function loadBlob({ silent = true } = {}) {
 /* ─── CONFIG modal ─── */
 function openConfig() {
   $("#cfg-twelvedata").value = Store.state.config.twelveDataKey || "";
+  const rate = Store.state.config.eur_usd;
+  const rateEl = $("#cfg-eur-usd-info");
+  if (rateEl) rateEl.textContent = rate ? `EUR/USD: ${rate.toFixed(4)}` : "EUR/USD: nicht geladen";
   openModal("#modal-config");
 }
 function saveConfig() {
@@ -1955,8 +2429,9 @@ function applyTdLookupResult(r) {
   $("#edit-td-symbol").value = r.symbol || "";
   $("#edit-td-mic").value    = r.mic_code || "";
   /* highlight chosen result */
-  $$(".td-result").forEach(el => el.classList.remove("is-active"));
-  const active = [...$$(".td-result")].find(el => el.querySelector(".td-result__sym").textContent === r.symbol);
+  const results = $$(".td-result");
+  results.forEach(el => el.classList.remove("is-active"));
+  const active = [...results].find(el => el.querySelector(".td-result__sym").textContent === r.symbol);
   if (active) active.classList.add("is-active");
   /* status line */
   const status = $("#edit-td-status");
@@ -1984,8 +2459,8 @@ function bindEvents() {
   // sub bar
   $("#btn-element-card-view") .addEventListener("click", () => { Store.patchUi({ view: "cards" }); Render.viewMode(); });
   $("#btn-element-table-view").addEventListener("click", () => { Store.patchUi({ view: "table" }); Render.viewMode(); });
-  $("#btn-element-refresh")     .addEventListener("click", () => refreshBucket(Store.state.ui.bucket));
-  $("#btn-element-fullrefresh") .addEventListener("click", () => refreshListFull(Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket), `${Store.state.ui.bucket} vollständig aktualisiert`));
+  $("#btn-element-refresh")     .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "flat" }));
+  $("#btn-element-fullrefresh") .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "full" }));
   $("#btn-filter-trig")         .addEventListener("click", () => {
     Store.patchUi({ triggeredOnly: !Store.state.ui.triggeredOnly });
     Render.filterBtn(); Render.bucket();
@@ -2000,7 +2475,11 @@ function bindEvents() {
   });
 
   // bottom nav
-  $("#nav-bottom-element-home") .addEventListener("click", () => { Store.patchUi({ triggeredOnly: false, selected: [] }); Render.all(); });
+  $("#nav-bottom-element-home").addEventListener("click", () => {
+    const next = Store.state.ui.activeView === "portfolio" ? "screener" : "portfolio";
+    Store.patchUi({ triggeredOnly: false, selected: [] });
+    switchView(next);
+  });
   $("#nav-bottom-element-alert").addEventListener("click", openAlertsOverview);
   $("#nav-bottom-element-dropdown").addEventListener("change", e => {
     Store.patchUi({ bucket: e.target.value, selected: [] });
@@ -2008,8 +2487,9 @@ function bindEvents() {
   });
 
   // side menu
-  $("#menu-nav-btn-screener") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
-  $("#menu-nav-btn-portfolio").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
+  $("#menu-nav-btn-screener")  .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
+  $("#menu-nav-btn-dashboard") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("dashboard"); });
+  $("#menu-nav-btn-portfolio") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
   document.addEventListener("click", e => {
     const tab = e.target.closest(".pf-tab");
     if (tab) switchPfTab(tab.dataset.pftab);
@@ -2017,6 +2497,7 @@ function bindEvents() {
   $("#menu-nav-btn-config")   .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); openConfig(); });
   $("#menu-nav-btn-cloud-load").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); loadBlob({ silent: false }); });
   $("#menu-nav-btn-cloud-save").addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); saveBlob(null); });
+  $("#menu-nav-btn-console")  .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); window.eruda?.show(); });
   $("#nav-sheet-close")       .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); });
   $("#nav-scrim")             .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); });
 
@@ -2031,8 +2512,8 @@ function bindEvents() {
 
   // info modal — prompt selector
   const promptSel = $("#info-prompt-select");
-  if (promptSel && typeof PROMPTS !== "undefined") {
-    PROMPTS.forEach(p => {
+  if (promptSel && typeof window.PROMPTS !== "undefined") {
+    window.PROMPTS.forEach(p => {
       const o = document.createElement("option");
       o.value = p.id; o.textContent = p.label;
       promptSel.appendChild(o);
@@ -2108,6 +2589,7 @@ function bindEvents() {
 
   // config
   $("#modal-config-save").addEventListener("click", saveConfig);
+  $("#modal-bench-save") .addEventListener("click", saveBenchSettings);
 }
 
 /* ════════════════════════════════════════════════════
@@ -2131,39 +2613,168 @@ function switchView(view) {
     const activeTab = $(".pf-tab.is-active")?.dataset?.pftab || "perf";
     if (activeTab === "archive") renderArchiveView();
     else renderPortfolioPerf();
+  } else if (view === "dashboard") {
+    renderDashboard();
   }
 }
 
 function updatePromptText() {
-  if (!_currentInfoTicker || typeof PROMPTS === "undefined") return;
+  if (!_currentInfoTicker || typeof window.PROMPTS === "undefined") return;
   const sel = $("#info-prompt-select");
-  const prompt = PROMPTS.find(p => p.id === sel.value);
+  const prompt = window.PROMPTS.find(p => p.id === sel.value);
   if (!prompt) return;
   $("#info-prompt-text").value = fillPrompt(prompt.template, _currentInfoTicker);
+}
+
+function pfWaterfall(positions) {
+  const sorted = [...positions].sort((a, b) => (b.position_pl_abs || 0) - (a.position_pl_abs || 0));
+  const maxAbs = Math.max(...sorted.map(t => Math.abs(t.position_pl_abs || 0)), 0.01);
+  return `<div class="pf-section">
+    <div class="pf-section__title">P/L je Position</div>
+    <div class="pf-waterfall">
+      ${sorted.map(t => {
+        const pl = t.position_pl_abs;
+        const w  = pl != null ? Math.max(2, Math.round(Math.abs(pl) / maxAbs * 100)) : 0;
+        return `<div class="pf-wf-row">
+          <span class="pf-wf-sym">${t.symbol}</span>
+          <div class="pf-wf-track">
+            <div class="pf-wf-bar ${signCls(pl)}" style="width:${w}%"></div>
+          </div>
+          <span class="pf-wf-val ${signCls(pl)}">${signedNum(pl, 0, "€")}</span>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
+function pfScatterMatrix(positions) {
+  const pts = positions.filter(t => t.rsi != null && t.sentiment_score != null);
+  if (!pts.length) return "";
+  const W = 320, H = 190;
+  const PL = 28, PR = 12, PT = 16, PB = 28;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const toX = s  => PL + ((Math.max(-1, Math.min(1, s)) + 1) / 2) * iW;
+  const toY = r  => PT + (1 - Math.max(0, Math.min(100, r)) / 100) * iH;
+  const qx  = toX(0), y70 = toY(70), y30 = toY(30);
+  const quadLabels = [
+    { x: PL + iW * 0.76, y: PT + 10, txt: "Stark & Heiß" },
+    { x: PL + iW * 0.24, y: PT + 10, txt: "Überkauft" },
+    { x: PL + iW * 0.76, y: H - PB - 6, txt: "Kaufzone" },
+    { x: PL + iW * 0.24, y: H - PB - 6, txt: "Schwach" },
+  ];
+  const dots = pts.map(t => {
+    const cx = toX(t.sentiment_score), cy = toY(t.rsi);
+    const fill = t.performance_pct == null ? "var(--muted)" : t.performance_pct >= 0 ? "var(--pos)" : "var(--neg)";
+    const labelX = cx + 7, labelY = cy + 3;
+    return `<g>
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${fill}" opacity=".85"/>
+      <text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="9" font-family="DM Sans,sans-serif" fill="var(--text)">${t.symbol}</text>
+    </g>`;
+  }).join("");
+  return `<div class="pf-section">
+    <div class="pf-section__title">RSI · Sentiment Matrix</div>
+    <div class="pf-scatter-wrap">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">
+        <rect x="${PL}" y="${PT}" width="${qx - PL}" height="${y70 - PT}" fill="var(--neg)" opacity=".04"/>
+        <rect x="${qx}" y="${PT}" width="${PL + iW - qx}" height="${y70 - PT}" fill="var(--pos)" opacity=".06"/>
+        <rect x="${PL}" y="${y30}" width="${qx - PL}" height="${PT + iH - y30}" fill="var(--muted)" opacity=".04"/>
+        <rect x="${qx}" y="${y30}" width="${PL + iW - qx}" height="${PT + iH - y30}" fill="var(--accent)" opacity=".05"/>
+        <line x1="${qx.toFixed(1)}" y1="${PT}" x2="${qx.toFixed(1)}" y2="${PT + iH}" stroke="var(--border)" stroke-width="1"/>
+        <line x1="${PL}" y1="${y70.toFixed(1)}" x2="${PL + iW}" y2="${y70.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+        <line x1="${PL}" y1="${y30.toFixed(1)}" x2="${PL + iW}" y2="${y30.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+        <text x="${PL - 4}" y="${y70.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">70</text>
+        <text x="${PL - 4}" y="${y30.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">30</text>
+        <text x="${PL}" y="${H - 4}" font-size="8" fill="var(--muted)">Bearish</text>
+        <text x="${PL + iW}" y="${H - 4}" font-size="8" text-anchor="end" fill="var(--muted)">Bullish</text>
+        ${quadLabels.map(l => `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" font-size="8" text-anchor="middle" fill="var(--muted)" opacity=".5">${l.txt}</text>`).join("")}
+        ${dots}
+      </svg>
+    </div>
+  </div>`;
+}
+
+function pfStrategySplit(allPortfolio) {
+  const STRATS  = ["long", "swing", "breakout"];
+  const LABELS  = { long: "Long", swing: "Swing", breakout: "Contrarian" };
+  const COLORS  = { long: "#3A82C4", swing: "#6EC6E6", breakout: "#9B6DFF" };
+  const targets = { long: 50, swing: 30, breakout: 20, ...Store.state.config.strategy_targets };
+  const values  = { long: 0, swing: 0, breakout: 0 };
+  allPortfolio.forEach(t => { if (t.priority in values) values[t.priority] += t.position_value || 0; });
+  const totalVal = Object.values(values).reduce((s, v) => s + v, 0) || 1;
+
+  // donut
+  const CX = 56, CY = 56, RO = 46, RI = 26;
+  let angle = -Math.PI / 2;
+  const arc = (pct) => {
+    const a = pct * 2 * Math.PI;
+    const end = angle + a;
+    const x1o = CX + RO * Math.cos(angle), y1o = CY + RO * Math.sin(angle);
+    const x2o = CX + RO * Math.cos(end),   y2o = CY + RO * Math.sin(end);
+    const x1i = CX + RI * Math.cos(angle), y1i = CY + RI * Math.sin(angle);
+    const x2i = CX + RI * Math.cos(end),   y2i = CY + RI * Math.sin(end);
+    const lg  = a > Math.PI ? 1 : 0;
+    const d   = pct < 0.002 ? "" :
+      `M${x1i.toFixed(1)},${y1i.toFixed(1)} L${x1o.toFixed(1)},${y1o.toFixed(1)} A${RO},${RO},0,${lg},1,${x2o.toFixed(1)},${y2o.toFixed(1)} L${x2i.toFixed(1)},${y2i.toFixed(1)} A${RI},${RI},0,${lg},0,${x1i.toFixed(1)},${y1i.toFixed(1)} Z`;
+    angle = end;
+    return d;
+  };
+  const paths = STRATS.map(s => ({ s, d: arc(values[s] / totalVal), color: COLORS[s] }));
+  const donut = `<svg viewBox="0 0 112 112" width="112" height="112" style="flex-shrink:0">
+    ${paths.map(p => p.d ? `<path d="${p.d}" fill="${p.color}" opacity=".85"/>` : "").join("")}
+    <text x="${CX}" y="${CY - 5}" text-anchor="middle" font-size="11" font-weight="700" font-family="DM Mono,monospace" fill="var(--text)">${numFmt(totalVal, 0)}</text>
+    <text x="${CX}" y="${CY + 10}" text-anchor="middle" font-size="8" font-family="DM Sans,sans-serif" fill="var(--muted)">€ investiert</text>
+  </svg>`;
+
+  const rows = STRATS.map(s => {
+    const actual  = Math.round((values[s] / totalVal) * 100);
+    const tgt     = targets[s] || 0;
+    const diff    = actual - tgt;
+    const diffCls = diff > 5 ? "pos" : diff < -5 ? "neg" : "dim";
+    return `<div class="pf-split__row">
+      <span class="pf-split__lbl" style="color:${COLORS[s]}">${LABELS[s]}</span>
+      <div class="pf-split__bars">
+        <div class="pf-split__bar-wrap">
+          <div class="pf-split__bar" style="width:${actual}%;background:${COLORS[s]}"></div>
+          <span class="pf-split__pct">${actual}%</span>
+          <span class="pf-split__diff ${diffCls}" title="Abweichung vom Ziel">${diff >= 0 ? "+" : ""}${diff}%</span>
+        </div>
+        <div class="pf-split__bar-wrap pf-split__bar-wrap--target">
+          <div class="pf-split__bar pf-split__bar--target" style="width:${tgt}%;background:${COLORS[s]}"></div>
+          <span class="pf-split__pct--target">Ziel <input class="pf-split__input" data-strat="${s}" type="number" min="0" max="100" value="${tgt}"/>%</span>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  return `<div class="pf-section">
+    <div class="pf-section__title">Strategie-Mix</div>
+    <div class="pf-split">
+      <div class="pf-split__donut">${donut}</div>
+      <div class="pf-split__detail">${rows}</div>
+    </div>
+  </div>`;
 }
 
 function renderPortfolioPerf() {
   const host = $("#portfolio-perf-root");
   if (!host) return;
-  const positions = Store.state.tickers
+  const allPortfolio = Store.state.tickers
     .filter(t => t.user.bucket === "portfolio")
-    .map(t => flat(t))
-    .filter(t => t.position_value != null);
+    .map(t => flat(t));
+  const positions = allPortfolio.filter(t => t.position_value != null);
 
-  if (!positions.length) {
-    host.innerHTML = `<div class="tcard__empty">Keine Portfolio-Positionen mit Einstand + Stückzahl vorhanden.</div>`;
+  if (!allPortfolio.length) {
+    host.innerHTML = `<div class="tcard__empty">Keine Portfolio-Positionen vorhanden.</div>`;
     return;
   }
 
-  const totalValue   = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
-  const totalCost    = positions.reduce((s, t) => s + ((t._raw?.user?.entry_price_manual || 0) * (t._raw?.user?.entry_shares || 0)), 0);
-  const totalPlAbs   = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
-  const totalPlPct   = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
-  const clsP = v => v >= 0 ? "pos" : "neg";
+  const totalValue = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
+  const totalCost  = positions.reduce((s, t) => s + ((t.entry_price_manual || 0) * (t.entry_shares || 0)), 0);
+  const totalPlAbs = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
+  const totalPlPct = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
 
-  // treemap via SVG
   const W = 340, H = 160;
-  const treemap = buildTreemap(positions, W, H);
+  const treemap = positions.length ? buildTreemap(positions, W, H) : [];
 
   host.innerHTML = `
     <div class="pf-summary">
@@ -2173,34 +2784,38 @@ function renderPortfolioPerf() {
       </div>
       <div class="pf-summary__kpi">
         <span class="pf-summary__label">P/L gesamt</span>
-        <span class="pf-summary__val ${clsP(totalPlAbs)}">${totalPlAbs >= 0 ? "+" : ""}${numFmt(totalPlAbs, 0)} (${totalPlPct != null ? (totalPlPct >= 0 ? "+" : "") + numFmt(totalPlPct, 2) + "%" : "—"})</span>
+        <span class="pf-summary__val ${signCls(totalPlAbs)}">${signedNum(totalPlAbs, 0)} (${totalPlPct != null ? signedNum(totalPlPct, 2, "%") : "—"})</span>
       </div>
     </div>
-    <div class="pf-treemap-wrap">
+    ${treemap.length ? `<div class="pf-treemap-wrap">
       <svg class="pf-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
         ${treemap.map(r => {
           const perf = r.performance_pct;
+          const val  = r.position_value;
           const fill = perf == null ? "var(--border)" : perf >= 0 ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})` : `rgba(239,66,66,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})`;
-          const textCol = "var(--text)";
           const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
           return `<g>
             <rect x="${r.x1+1}" y="${r.y1+1}" width="${fw-2}" height="${fh-2}" rx="4" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
-            ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="${textCol}" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
-            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="${textCol}" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${perf != null ? (perf>=0?"+":"")+numFmt(perf,1)+"%" : "—"}</text>` : ""}
+            ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
+            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${val != null ? numFmt(val, 0) + "€" : "—"}</text>` : ""}
           </g>`;
         }).join("")}
       </svg>
-    </div>
-    <div class="pf-positions">
-      ${positions.sort((a,b) => (b.position_value||0)-(a.position_value||0)).map(t => `
-        <div class="pf-pos">
-          <span class="pf-pos__sym">${t.symbol}</span>
-          <span class="pf-pos__name dim">${t.name || ""}</span>
-          <span class="pf-pos__val">${numFmt(t.position_value)}</span>
-          <span class="pf-pos__pl ${clsP(t.performance_pct || 0)}">${t.performance_pct != null ? (t.performance_pct>=0?"+":"")+numFmt(t.performance_pct,2)+"%" : "—"}</span>
-          <span class="pf-pos__plabs ${clsP(t.position_pl_abs || 0)}">${t.position_pl_abs != null ? (t.position_pl_abs>=0?"+":"")+numFmt(t.position_pl_abs,0) : "—"}</span>
-        </div>`).join("")}
-    </div>`;
+    </div>` : ""}
+    ${positions.length ? pfWaterfall(positions) : ""}
+    ${positions.length ? pfScatterMatrix(positions) : ""}
+    ${pfStrategySplit(allPortfolio)}`;
+
+  host.querySelectorAll(".pf-split__input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const targets = Store.state.config.strategy_targets || {};
+      host.querySelectorAll(".pf-split__input").forEach(el => {
+        targets[el.dataset.strat] = Math.max(0, Math.min(100, +el.value || 0));
+      });
+      Store.patchConfig({ strategy_targets: targets });
+      renderPortfolioPerf();
+    });
+  });
 }
 
 function buildTreemap(positions, W, H) {
@@ -2262,7 +2877,658 @@ function squarify(items, box, out) {
 }
 
 /* ════════════════════════════════════════════════════
-   SECTION 8 — INIT
+   SECTION 8 — DASHBOARD
+   ════════════════════════════════════════════════════ */
+
+function _avg(arr) {
+  if (!arr.length) return null;
+  return arr.reduce((s, v) => s + v, 0) / arr.length;
+}
+
+function _dashRows() {
+  return Store.state.tickers
+    .map(t => ({ t, f: flat(t) }))
+    .filter(r => r.f.price != null);
+}
+
+function _pos52w(f) {
+  if (f.price != null && f.high_52w != null && f.low_52w != null && f.high_52w > f.low_52w)
+    return (f.price - f.low_52w) / (f.high_52w - f.low_52w) * 100;
+  return null;
+}
+
+/* I — Kanban KPIs */
+function _dashKanban(rows) {
+  const buckets = ["portfolio", "watchlist", "neutral"];
+  const labels  = { portfolio: "Portfolio", watchlist: "Watchlist", neutral: "Neutral" };
+  const cards = buckets.map(b => {
+    const br  = rows.filter(r => r.f.bucket === b);
+    const cnt = br.length;
+    const avgRsi = _avg(br.map(r => r.f.rsi).filter(v => v != null));
+    const avgChg = _avg(br.map(r => r.f.day_change_pct).filter(v => v != null));
+    const trig   = br.filter(r => r.f.alert_triggered).length;
+    const chgCls = avgChg == null ? "" : avgChg >= 0 ? "pos" : "neg";
+    const chgLbl = avgChg == null ? "—" : (avgChg >= 0 ? "+" : "") + avgChg.toFixed(1) + "%";
+    const trigHtml = trig > 0 ? `<span class="dash-kpi__trig">${trig} Alert${trig > 1 ? "s" : ""}</span>` : "";
+    return `<div class="dash-kpi">
+      <div class="dash-kpi__head">
+        <span class="dash-kpi__label">${labels[b]}</span>
+        <span class="dash-kpi__count">${cnt}</span>
+      </div>
+      <div class="dash-kpi__stats">
+        <span>Ø RSI <b>${avgRsi != null ? avgRsi.toFixed(0) : "—"}</b></span>
+        <span>Ø Tag <b class="${chgCls}">${chgLbl}</b></span>
+        ${trigHtml}
+      </div>
+    </div>`;
+  });
+  return `<div class="dash-section">
+    <div class="dash-section__title">Übersicht</div>
+    <div class="dash-kanban">${cards.join("")}</div>
+  </div>`;
+}
+
+/* H — MA-Alignment Heatmap */
+function _dashHeatmap(rows) {
+  const sorted = [...rows].sort((a, b) =>
+    a.f.bucket.localeCompare(b.f.bucket) || (a.f.symbol || "").localeCompare(b.f.symbol || "")
+  );
+  const MAS  = ["ma20", "ma50", "ma200"];
+  const LABS = ["MA20", "MA50", "MA200"];
+  const withData = sorted.filter(r => MAS.some(ma => r.f[ma] != null)).length;
+  const head = LABS.map(l => `<th class="dhm__th">${l}</th>`).join("");
+  const body = sorted.map(r => {
+    const cells = MAS.map(ma => {
+      const above = r.f[ma] != null && r.f.price != null ? r.f.price > r.f[ma] : null;
+      const cls = above === null ? "dhm__cell--na" : above ? "dhm__cell--up" : "dhm__cell--dn";
+      const title = r.f[ma] != null ? r.f[ma].toFixed(2) : "kein Datenabruf";
+      const inner = above === null ? "—" : "";
+      return `<td class="dhm__cell ${cls}" title="${title}">${inner}</td>`;
+    }).join("");
+    const bucketDot = `<span class="dhm__dot dhm__dot--${r.f.bucket}"></span>`;
+    return `<tr><td class="dhm__sym">${bucketDot}${r.f.symbol}</td>${cells}</tr>`;
+  }).join("");
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">MA-Alignment <span class="dash-count">${withData}/${sorted.length}</span></div>
+    <div class="dhm-wrap">
+      <table class="dhm">
+        <thead><tr><th></th>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* S — RSI · Sentiment Matrix (Watchlist) */
+function _dashSentimentMatrix(rows) {
+  const pts = rows
+    .filter(r => r.f.bucket === "watchlist" && r.f.rsi != null)
+    .map(r => ({ sym: r.f.symbol, rsi: r.f.rsi, sent: r.f.sentiment_score ?? 0 }));
+
+  if (!pts.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">RSI · Sentiment</div>
+    <div class="dash-empty">Watchlist ohne RSI-Daten (Full-Refresh erforderlich)</div>
+  </div>`;
+
+  const W = 280, H = 180;
+  const PL = 28, PR = 12, PT = 14, PB = 26;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const toX = s => PL + ((Math.max(-1, Math.min(1, s)) + 1) / 2) * iW;
+  const toY = r => PT + (1 - Math.max(0, Math.min(100, r)) / 100) * iH;
+  const qx = toX(0), y70 = toY(70), y30 = toY(30);
+  const quadLabels = [
+    { x: PL + iW * 0.76, y: PT + 10,      txt: "Stark & Heiß" },
+    { x: PL + iW * 0.24, y: PT + 10,      txt: "Überkauft"    },
+    { x: PL + iW * 0.76, y: H - PB - 6,   txt: "Kaufzone"     },
+    { x: PL + iW * 0.24, y: H - PB - 6,   txt: "Schwach"      },
+  ];
+  const dots = pts.map(p => {
+    const cx = toX(p.sent), cy = toY(p.rsi);
+    const fill = p.rsi < 30 ? "var(--pos)" : p.rsi > 70 ? "var(--neg)" : "var(--accent)";
+    return `<g>
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${fill}" opacity=".82"/>
+      <text x="${(cx+7).toFixed(1)}" y="${(cy+3).toFixed(1)}" font-size="9" font-family="DM Sans,sans-serif" fill="var(--text)">${p.sym}</text>
+    </g>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">RSI · Sentiment <span class="dash-count">${pts.length}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">
+      <rect x="${PL}" y="${PT}" width="${(qx-PL).toFixed(1)}" height="${(y70-PT).toFixed(1)}" fill="var(--neg)" opacity=".04"/>
+      <rect x="${qx.toFixed(1)}" y="${PT}" width="${(PL+iW-qx).toFixed(1)}" height="${(y70-PT).toFixed(1)}" fill="var(--pos)" opacity=".06"/>
+      <rect x="${PL}" y="${y30.toFixed(1)}" width="${(qx-PL).toFixed(1)}" height="${(PT+iH-y30).toFixed(1)}" fill="var(--muted)" opacity=".04"/>
+      <rect x="${qx.toFixed(1)}" y="${y30.toFixed(1)}" width="${(PL+iW-qx).toFixed(1)}" height="${(PT+iH-y30).toFixed(1)}" fill="var(--accent)" opacity=".05"/>
+      <line x1="${qx.toFixed(1)}" y1="${PT}" x2="${qx.toFixed(1)}" y2="${(PT+iH).toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+      <line x1="${PL}" y1="${y70.toFixed(1)}" x2="${(PL+iW).toFixed(1)}" y2="${y70.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="${PL}" y1="${y30.toFixed(1)}" x2="${(PL+iW).toFixed(1)}" y2="${y30.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="${(PL-4)}" y="${y70.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">70</text>
+      <text x="${(PL-4)}" y="${y30.toFixed(1)}" font-size="8" text-anchor="end" dominant-baseline="middle" fill="var(--muted)">30</text>
+      <text x="${PL}" y="${H-4}" font-size="8" fill="var(--muted)">Bearish</text>
+      <text x="${(PL+iW)}" y="${H-4}" font-size="8" text-anchor="end" fill="var(--muted)">Bullish</text>
+      ${quadLabels.map(l => `<text x="${l.x.toFixed(1)}" y="${l.y}" font-size="8" text-anchor="middle" fill="var(--muted)" opacity=".5">${l.txt}</text>`).join("")}
+      ${dots}
+    </svg>
+    <div class="dash-legend">
+      <span class="dash-legend__dot" style="background:var(--pos)"></span>RSI &lt;30
+      <span class="dash-legend__dot" style="background:var(--accent)"></span>Neutral
+      <span class="dash-legend__dot" style="background:var(--neg)"></span>RSI &gt;70
+    </div>
+  </div>`;
+}
+
+/* K — 52W × RSI Scatter + Matrix */
+function _dashScatter(rows) {
+  const pts = rows.map(r => {
+    const p52 = _pos52w(r.f);
+    return r.f.rsi != null && p52 != null
+      ? { sym: r.f.symbol, rsi: r.f.rsi, p52, bucket: r.f.bucket }
+      : null;
+  }).filter(Boolean);
+  const countLabel = pts.length ? ` <span class="dash-count">${pts.length}</span>` : "";
+
+  const W = 260, H = 170, PL = 32, PR = 8, PT = 8, PB = 28;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const BCOL = { portfolio: "var(--accent)", watchlist: "var(--pos)", neutral: "var(--muted)" };
+  const dots = pts.map(p => {
+    const cx = (PL + (p.rsi / 100) * iw).toFixed(1);
+    const cy = (PT + (1 - p.p52 / 100) * ih).toFixed(1);
+    const col = BCOL[p.bucket] || "var(--muted)";
+    return `<circle cx="${cx}" cy="${cy}" r="4" fill="${col}" opacity="0.75"><title>${p.sym} RSI=${p.rsi.toFixed(0)} 52W=${p.p52.toFixed(0)}%</title></circle>`;
+  }).join("");
+  const rsiZoneX1 = (PL + 0.30 * iw).toFixed(1);
+  const rsiZoneW  = (0.40 * iw).toFixed(1);
+  const axisLabels = [
+    `<text x="${(PL + 0.30*iw).toFixed(1)}" y="${H-PB+12}" font-size="9" fill="var(--muted)" text-anchor="middle">30</text>`,
+    `<text x="${(PL + 0.70*iw).toFixed(1)}" y="${H-PB+12}" font-size="9" fill="var(--muted)" text-anchor="middle">70</text>`,
+    `<text x="${(PL + 0.50*iw).toFixed(1)}" y="${H-PB+22}" font-size="9" fill="var(--muted)" text-anchor="middle">RSI →</text>`,
+    `<text x="${(PL-6).toFixed(1)}" y="${(PT + ih*0.25).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">75%</text>`,
+    `<text x="${(PL-6).toFixed(1)}" y="${(PT + ih*0.75).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">25%</text>`,
+    `<text x="${(PL-6).toFixed(1)}" y="${(PT + ih*0.50).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">50%</text>`,
+  ].join("");
+  const svgK2 = `<svg class="dash-scatter dash-k2" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    <rect x="${rsiZoneX1}" y="${PT}" width="${rsiZoneW}" height="${ih}" fill="var(--surface)" rx="2"/>
+    <line x1="${PL}" y1="${H-PB}" x2="${W-PR}" y2="${H-PB}" stroke="var(--line)" stroke-width="1"/>
+    <line x1="${PL}" y1="${PT}" x2="${PL}" y2="${H-PB}" stroke="var(--line)" stroke-width="1"/>
+    ${axisLabels}
+    ${dots}
+  </svg>`;
+
+  const RSI_BINS = [{lo:0,hi:30,label:"RSI<30"},{lo:30,hi:50,label:"30-50"},{lo:50,hi:70,label:"50-70"},{lo:70,hi:101,label:"RSI>70"}];
+  const POS_BINS = [{lo:75,hi:101,label:">75%"},{lo:50,hi:75,label:"50-75%"},{lo:25,hi:50,label:"25-50%"},{lo:0,hi:25,label:"<25%"}];
+  const matrix = POS_BINS.map(pb => RSI_BINS.map(rb =>
+    pts.filter(p => p.rsi >= rb.lo && p.rsi < rb.hi && p.p52 >= pb.lo && p.p52 < pb.hi)
+  ));
+  const maxN = Math.max(1, ...matrix.flat().map(c => c.length));
+  const matRows = POS_BINS.map((pb, ri) => `<tr>
+    <td class="dk3__label">${pb.label}</td>
+    ${RSI_BINS.map((rb, ci) => {
+      const cell = matrix[ri][ci];
+      const alpha = (cell.length / maxN * 0.65).toFixed(2);
+      const bg = cell.length ? `rgba(80,120,220,${alpha})` : "transparent";
+      const tip = cell.map(p => p.sym).join(", ") || "";
+      return `<td class="dk3__cell" style="background:${bg}" title="${tip}">${cell.length || ""}</td>`;
+    }).join("")}
+  </tr>`).join("");
+  const matrixHtml = `<table class="dash-k3" hidden>
+    <thead><tr><th></th>${RSI_BINS.map(b => `<th class="dk3__th">${b.label}</th>`).join("")}</tr></thead>
+    <tbody>${matRows}</tbody>
+  </table>`;
+
+  const legend = `<div class="dash-legend">
+    <span class="dash-legend__dot" style="background:var(--accent)"></span>Portfolio
+    <span class="dash-legend__dot" style="background:var(--pos)"></span>Watchlist
+    <span class="dash-legend__dot" style="background:var(--muted)"></span>Neutral
+  </div>`;
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__head">
+      <div class="dash-section__title">52W × RSI${countLabel}</div>
+      <div class="dtog">
+        <button class="dtog__btn is-active" data-k="k2">Scatter</button>
+        <button class="dtog__btn" data-k="k3">Matrix</button>
+      </div>
+    </div>
+    ${svgK2}
+    ${matrixHtml}
+    ${legend}
+    ${pts.length === 0 ? '<div class="dash-empty">Keine Daten (RSI + 52W fehlt)</div>' : ""}
+  </div>`;
+}
+
+/* L — Momentum 7T */
+function _dashMomentum(rows) {
+  const items = rows.map(r => {
+    const l7 = r.f.last7d;
+    if (!l7 || l7.length < 2 || !l7[0]) return null;
+    return { sym: r.f.symbol, pct: (l7[l7.length-1] - l7[0]) / Math.abs(l7[0]) * 100 };
+  }).filter(Boolean).sort((a, b) => b.pct - a.pct);
+
+  if (!items.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Momentum 7T</div><div class="dash-empty">Keine 7T-Daten (Full-Refresh erforderlich)</div></div>`;
+
+  const maxAbs = Math.max(...items.map(m => Math.abs(m.pct)), 0.01);
+  const bars = items.slice(0, 15).map(m => {
+    const w = Math.max(1, Math.abs(m.pct) / maxAbs * 100).toFixed(0);
+    const pos = m.pct >= 0;
+    return `<div class="dash-bar">
+      <div class="dash-bar__lbl">${m.sym}</div>
+      <div class="dash-bar__track"><div class="dash-bar__fill ${pos ? "dash-bar__fill--pos" : "dash-bar__fill--neg"}" style="width:${w}%"></div></div>
+      <div class="dash-bar__val ${pos ? "pos" : "neg"}">${pos ? "+" : ""}${m.pct.toFixed(1)}%</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Momentum 7T <span class="dash-count">${items.length}</span></div>
+    <div class="dash-bars">${bars}</div>
+  </div>`;
+}
+
+/* M — Volatilität 7T */
+function _dashVolatility(rows) {
+  const items = rows.map(r => {
+    const l7 = r.f.last7d;
+    if (!l7 || l7.length < 2) return null;
+    const rets = [];
+    for (let i = 1; i < l7.length; i++) if (l7[i-1]) rets.push((l7[i] - l7[i-1]) / l7[i-1] * 100);
+    if (!rets.length) return null;
+    const mean = _avg(rets);
+    const vol  = Math.sqrt(rets.reduce((s, v) => s + (v - mean) ** 2, 0) / rets.length);
+    return { sym: r.f.symbol, vol };
+  }).filter(Boolean).sort((a, b) => b.vol - a.vol);
+
+  if (!items.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Volatilität 7T</div><div class="dash-empty">Keine 7T-Daten (Full-Refresh erforderlich)</div></div>`;
+
+  const maxV = Math.max(...items.map(v => v.vol), 0.01);
+  const bars = items.slice(0, 15).map(v => {
+    const w = Math.max(1, v.vol / maxV * 100).toFixed(0);
+    return `<div class="dash-bar">
+      <div class="dash-bar__lbl">${v.sym}</div>
+      <div class="dash-bar__track"><div class="dash-bar__fill dash-bar__fill--vol" style="width:${w}%"></div></div>
+      <div class="dash-bar__val dim">${v.vol.toFixed(1)}%</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Volatilität 7T <span class="dash-count">${items.length}</span></div>
+    <div class="dash-bars">${bars}</div>
+  </div>`;
+}
+
+/* O — Opportunity Score */
+function _dashOpportunity(rows) {
+  const BCOL = { portfolio: "var(--accent)", watchlist: "var(--pos)", neutral: "var(--muted)" };
+  const scored = rows.map(r => {
+    const f = r.f;
+    let score = 0, n = 0;
+    if (f.rsi != null)       { score += (1 - f.rsi / 100) * 35; n++; }
+    const p52 = _pos52w(f);
+    if (p52 != null)         { score += (1 - p52 / 100) * 30; n++; }
+    if (f.last7d?.length >= 2 && f.last7d[0]) {
+      const mom = (f.last7d[f.last7d.length-1] - f.last7d[0]) / Math.abs(f.last7d[0]) * 100;
+      score += Math.max(-5, Math.min(5, mom)) * 0.5; n++;
+    }
+    if (n === 0) return null;
+    return { sym: f.symbol, score, bucket: f.bucket };
+  }).filter(Boolean).sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Opportunity Score</div><div class="dash-empty">Keine Daten</div></div>`;
+
+  const maxS = scored[0].score;
+  const bars = scored.slice(0, 10).map((s, i) => {
+    const w = Math.max(1, s.score / maxS * 100).toFixed(0);
+    const col = BCOL[s.bucket] || "var(--muted)";
+    return `<div class="dash-bar">
+      <div class="dash-bar__lbl">${i+1}. ${s.sym}</div>
+      <div class="dash-bar__track"><div class="dash-bar__fill" style="width:${w}%;background:${col}"></div></div>
+      <div class="dash-bar__val dim">${s.score.toFixed(0)}</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="dash-section dash-section--half">
+    <div class="dash-section__title">Opportunity Score <span class="dash-count">${scored.length}</span></div>
+    <div class="dash-bars">${bars}</div>
+  </div>`;
+}
+
+function renderDashboard() {
+  const rows = _dashRows();
+  const el   = $("#dashboard-root");
+  if (!el) return;
+
+  el.innerHTML = `<div class="dash">
+    ${_dashKanban(rows)}
+    <div class="dash__grid2">
+      ${_dashHeatmap(rows)}
+      ${_dashSentimentMatrix(rows)}
+    </div>
+    <div class="dash__grid2">
+      ${_dashScatter(rows)}
+      ${_dashMomentum(rows)}
+    </div>
+    <div class="dash__grid2">
+      ${_dashVolatility(rows)}
+      ${_dashOpportunity(rows)}
+    </div>
+  </div>`;
+
+  /* K2/K3 toggle */
+  el.querySelectorAll(".dtog .dtog__btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tog = btn.closest(".dtog");
+      tog.querySelectorAll(".dtog__btn").forEach(b => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const mode = btn.dataset.k;
+      const sec  = btn.closest(".dash-section");
+      sec.querySelector(".dash-k2").hidden = mode !== "k2";
+      sec.querySelector(".dash-k3").hidden = mode !== "k3";
+    });
+  });
+}
+
+/* ════════════════════════════════════════════════════
+   AUTO-REFRESH (F1)
+   ════════════════════════════════════════════════════ */
+
+function isMarketHours() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Berlin", weekday: "short",
+    hour: "numeric", hour12: false, hourCycle: "h23"
+  }).formatToParts(now);
+  const weekday = parts.find(p => p.type === "weekday")?.value;
+  const hour    = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
+  return weekday !== "Sat" && weekday !== "Sun" && hour >= 8 && hour < 23;
+}
+
+const US_MICS = new Set(["XNYS", "XNAS", "XNGS", "XNCM", "XNMS", "ARCX", "BATS"]);
+function isUSTicker(t) {
+  const mic  = (t.stamm.twelvedata_mic_code || "").toUpperCase();
+  const exch = (t.stamm.twelvedata_exchange || t.stamm.exchange || "").toUpperCase();
+  if (US_MICS.has(mic)) return true;
+  if (exch.includes("NASDAQ") || exch.includes("NYSE") || exch.includes("ARCA")) return true;
+  return false;
+}
+
+const Progress = {
+  _active: false,
+  _activeText: "",
+  _badge:  () => $("#auto-refresh-indicator"),
+  _status: () => $("#td-status"),
+  set(text, title) {
+    this._active = true;
+    this._activeText = text || "";
+    const b = this._badge();
+    if (b) {
+      b.textContent = text || "";
+      b.title = title || "";
+      if (text) b.classList.add("auto-refresh-badge--active");
+      else      b.classList.remove("auto-refresh-badge--active");
+    }
+    this._renderStatus();
+  },
+  clear() {
+    this._active = false;
+    this._activeText = "";
+    this.renderIdle();
+  },
+  renderIdle() {
+    if (this._active) { this._renderStatus(); return; }
+    const b = this._badge();
+    if (b) {
+      const dayUsed = TdRL._dayUsed, dayMax = TdRL.DAY_MAX;
+      const nextMs  = TdRL.nextAvailableIn();
+      if (dayUsed >= dayMax)   { b.textContent = `TD ✕ ${dayUsed}/${dayMax}`; b.classList.add("auto-refresh-badge--active"); }
+      else if (nextMs > 0)     { b.textContent = `⏱${Math.ceil(nextMs/1000)}s`; b.classList.add("auto-refresh-badge--active"); }
+      else if (dayUsed > 0)    { b.textContent = `${dayUsed}/${dayMax}`; b.classList.add("auto-refresh-badge--active"); }
+      else                     { b.textContent = ""; b.classList.remove("auto-refresh-badge--active"); }
+      b.title = "";
+    }
+    this._renderStatus();
+  },
+  _renderStatus() {
+    const el = this._status(); if (!el) return;
+    const dayUsed = TdRL._dayUsed, dayMax = TdRL.DAY_MAX;
+    const minUsed = TdRL._used,    minMax = TdRL.MAX;
+    const nextMs  = TdRL.nextAvailableIn();
+    el.classList.remove("td-status--active","td-status--warn","td-status--block");
+    let stateLabel, stateCls = "";
+    if (this._active && this._activeText) {
+      stateLabel = this._activeText;
+      stateCls = "td-status--active";
+    } else if (dayUsed >= dayMax) {
+      stateLabel = "Tageslimit erreicht — Reset 00:00 UTC";
+      stateCls = "td-status--block";
+    } else if (nextMs > 0) {
+      stateLabel = `nächster Slot in ${Math.ceil(nextMs/1000)}s`;
+      stateCls = "td-status--warn";
+    } else {
+      stateLabel = "bereit";
+    }
+    if (stateCls) el.classList.add(stateCls);
+    el.innerHTML =
+      `<span class="td-status__item"><span class="td-status__label">Status:</span><span class="td-status__value">${stateLabel}</span></span>` +
+      `<span class="td-status__item"><span class="td-status__label">TD Tag:</span><span class="td-status__value">${dayUsed}/${dayMax}</span></span>` +
+      `<span class="td-status__item"><span class="td-status__label">Minute:</span><span class="td-status__value">${minUsed}/${minMax}</span></span>`;
+  }
+};
+
+function sleepWithCountdown(ms, prefix) {
+  return new Promise(resolve => {
+    const end = Date.now() + ms;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+      Progress.set(`${prefix} ⏱${remaining}s`, `Rate-Limit Pause: ${remaining}s`);
+      if (Date.now() >= end) { resolve(); return; }
+      setTimeout(tick, 1000);
+    };
+    tick();
+  });
+}
+
+/* Flash a glow on all DOM elements (card + table row) for the given ticker IDs. */
+function flashUpdated(ids) {
+  if (!ids.length) return;
+  const idSet = new Set(ids);
+  document.querySelectorAll("[data-id]").forEach(el => {
+    if (!idSet.has(el.dataset.id)) return;
+    el.classList.remove("quote-updated");
+    void el.offsetWidth; // force reflow to restart animation
+    el.classList.add("quote-updated");
+  });
+}
+
+/* Yahoo-Stream: batched 10-parallel, 300ms pause between batches.
+   Renders + flashes per ticker. Returns { ok, failed }. */
+const YAHOO_BATCH = 10;
+const YAHOO_PAUSE_MS = 300;
+
+async function yahooStreamRefresh(tickers, withHistory, label = "Yahoo") {
+  if (!tickers.length) return { ok: 0, failed: [] };
+  let ok = 0; const failed = [];
+  const total = tickers.length;
+  let done = 0;
+
+  for (let i = 0; i < tickers.length; i += YAHOO_BATCH) {
+    const chunk = tickers.slice(i, i + YAHOO_BATCH);
+    Progress.set(`${label} ${Math.min(i + YAHOO_BATCH, total)}/${total}`, `${label}: Batch läuft`);
+
+    await Promise.allSettled(chunk.map(async t => {
+      const sym = t.stamm.twelvedata_symbol || t.stamm.symbol;
+      const y = await API.yahooQuote(t, withHistory);
+      done++;
+      if (!y || y._error) {
+        failed.push({ symbol: sym, error: (y && y._error) || "Kein Yahoo-Ergebnis" });
+        return;
+      }
+      t.quotes._prev = { price: t.quotes.price, macd_histogram: t.quotes.macd_histogram, ma200: t.quotes.ma200 };
+      Object.assign(t.quotes, y.quote || {});
+      if (withHistory && Array.isArray(y.closes) && y.closes.length) {
+        const indicators = Calc.indicatorsFromCloses(y.closes, t.quotes.price);
+        Object.assign(t.quotes, indicators);
+        t.quotes.last7d = y.closes.slice(-7);
+      }
+      t.quotes._source = "yahoo";
+      ok++;
+      Calc.recompute(t);
+      Render.all();
+      flashUpdated([t.id]);
+    }));
+    Store.save();
+    if (i + YAHOO_BATCH < tickers.length) {
+      await new Promise(r => setTimeout(r, YAHOO_PAUSE_MS));
+    }
+  }
+  return { ok, failed };
+}
+
+/* TwelveData free-tier rate limiter: 7 credits/min (1 credit reserve), 1 credit = 1 symbol.
+   Called automatically by tdQuoteBatch + tdTimeSeriesBatch — protects all call paths. */
+const TdRL = {
+  MAX: 7, WIN: 60_000, DAY_MAX: 800,
+  _used: 0, _winStart: 0,
+  _dayUsed: 0, _dayKey: "",
+  STORAGE_KEY: "td_rl_v1",
+
+  _todayKey() { return new Date().toISOString().slice(0, 10); },
+  _rollDay() {
+    const today = this._todayKey();
+    if (today !== this._dayKey) { this._dayKey = today; this._dayUsed = 0; }
+  },
+  loadFromStorage() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(this.STORAGE_KEY) || "{}");
+      const today = this._todayKey();
+      this._dayKey  = today;
+      this._dayUsed = saved.day === today ? (+saved.used || 0) : 0;
+    } catch { this._dayKey = this._todayKey(); this._dayUsed = 0; }
+  },
+  _persist() {
+    try { localStorage.setItem(this.STORAGE_KEY, JSON.stringify({ day: this._dayKey, used: this._dayUsed })); } catch {}
+  },
+  nextAvailableIn() {
+    const now = Date.now();
+    if (now - this._winStart >= this.WIN) return 0;
+    if (this._used < this.MAX) return 0;
+    return this.WIN - (now - this._winStart);
+  },
+  async throttle(n, hint) {
+    this._rollDay();
+    const now = Date.now();
+    if (now - this._winStart >= this.WIN) { this._used = 0; this._winStart = now; }
+    if (this._used + n > this.MAX) {
+      const wait = this.WIN - (now - this._winStart) + 300;
+      await sleepWithCountdown(wait, hint || "TD");
+      this._used = 0; this._winStart = Date.now();
+    }
+    this._used += n;
+    this._dayUsed += n;
+    this._persist();
+  }
+};
+
+/* TD-Stream: chunks tickers into batches of TdRL.MAX (7) so each batch renders
+   independently — gives immediate feedback even when minute-window hits.
+   The TdRL throttle inside tdQuoteBatch/tdTimeSeriesBatch still protects the credit budget. */
+async function tdStreamRefresh(tickers, mode, label = "TD") {
+  if (!tickers.length) return { ok: 0, failed: [] };
+  const refreshFn = mode === "full" ? API.refreshFullMany : API.refreshMany;
+  let ok = 0; const failed = [];
+  const total = tickers.length;
+
+  for (let i = 0; i < tickers.length; i += TdRL.MAX) {
+    const chunk = tickers.slice(i, i + TdRL.MAX);
+    Progress.set(`${label} ${Math.min(i + TdRL.MAX, total)}/${total}`, `${label}: Batch läuft`);
+    const res = await refreshFn(chunk);
+    ok += res.ok || 0;
+    if (res.failed?.length) failed.push(...res.failed);
+    Calc.recomputeAll();
+    Store.save();
+    Render.all();
+    if (res.updatedIds?.length) flashUpdated(res.updatedIds);
+  }
+  return { ok, failed };
+}
+
+/* Split a ticker list into yahoo / td routes based on exchange classification. */
+function splitByRoute(tickers) {
+  return {
+    yahoo: tickers.filter(t => !isUSTicker(t)),
+    td:    tickers.filter(t =>  isUSTicker(t))
+  };
+}
+
+/* Build yahoo + td ticker lists based on scope.
+   - onload:   Yahoo = Portfolio non-US + Watchlist non-US + Neutral ALL.
+               TD    = Portfolio US + Watchlist US (Neutral NIE TD).
+   - active:   Yahoo = active bucket non-US (or ALL if bucket=neutral).
+               TD    = active bucket US (empty if bucket=neutral).
+   - selected: split the given ticker list by route.  */
+function buildRefreshScope(scope, opts = {}) {
+  const all = Store.state.tickers;
+  if (scope === "selected") {
+    return splitByRoute(opts.tickers || []);
+  }
+  if (scope === "active") {
+    const b = Store.state.ui.bucket;
+    const list = all.filter(t => t.user.bucket === b);
+    if (b === "neutral") return { yahoo: list, td: [] };
+    return splitByRoute(list);
+  }
+  /* onload */
+  const portfolio = all.filter(t => t.user.bucket === "portfolio");
+  const watchlist = all.filter(t => t.user.bucket === "watchlist");
+  const neutral   = all.filter(t => t.user.bucket === "neutral");
+  return {
+    yahoo: [...portfolio.filter(t => !isUSTicker(t)),
+            ...watchlist.filter(t => !isUSTicker(t)),
+            ...neutral],
+    td:    [...portfolio.filter(t => isUSTicker(t)),
+            ...watchlist.filter(t => isUSTicker(t))]
+  };
+}
+
+/* Unified refresh entry point. Yahoo + TD streams run in parallel.
+   opts:
+     scope:     "onload" | "active" | "selected"
+     tdMode:    "flat" | "full"             (default "flat")
+     yahooMode: "flat" | "full"             (default "full")
+     tickers:   array (required if scope=selected)
+     clearSel:  bool — clear UI selection after completion */
+async function smartRefresh(opts = {}) {
+  const { scope = "onload", tdMode = "flat", yahooMode = "full", tickers = null, clearSel = false } = opts;
+  setRefreshLoading(true);
+  const { yahoo, td } = buildRefreshScope(scope, { tickers });
+  const summary = { yahoo: { ok: 0, failed: 0 }, td: { ok: 0, failed: 0 } };
+  try {
+    const [yRes, tRes] = await Promise.all([
+      yahooStreamRefresh(yahoo, yahooMode === "full", "Yahoo"),
+      tdStreamRefresh(td, tdMode, "TD")
+    ]);
+    summary.yahoo.ok = yRes.ok || 0;
+    summary.yahoo.failed = (yRes.failed || []).length;
+    summary.td.ok = tRes.ok || 0;
+    summary.td.failed = (tRes.failed || []).length;
+
+    const totalOk = summary.yahoo.ok + summary.td.ok;
+    const totalFail = summary.yahoo.failed + summary.td.failed;
+    if (totalOk && !totalFail)      toast(`${totalOk} aktualisiert`, "pos");
+    else if (totalOk && totalFail)  toast(`${totalOk} ok, ${totalFail} Fehler`, "neg");
+    else if (totalFail)             toast(`Refresh fehlgeschlagen (${totalFail})`, "neg");
+  } catch (err) {
+    toast("Refresh-Fehler: " + err.message, "neg");
+    console.warn("[smartRefresh] fatal", err);
+  } finally {
+    Progress.clear();
+    setRefreshLoading(false);
+    if (clearSel) { Store.patchUi({ selected: [] }); }
+    Render.bulkbar();
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   SECTION 9 — INIT
    ════════════════════════════════════════════════════ */
 function init() {
   console.log("[init] Merkliste boot");
@@ -2276,8 +3542,17 @@ function init() {
   Render.all();
   if (window.lucide) lucide.createIcons();
   _updateDarkIcon();
+  TdRL.loadFromStorage();
+  setInterval(() => Progress.renderIdle(), 1000);
+  Progress.renderIdle();
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
+  /* Auto-Refresh on load deaktiviert — manuell via ⟳ Buttons */
 }
-document.addEventListener("DOMContentLoaded", init);
+// ES modules are deferred — DOM is already parsed when this runs
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
