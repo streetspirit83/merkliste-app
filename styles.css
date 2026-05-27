@@ -185,8 +185,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .fpill:hover { border-color: var(--accent); }
 .fpill.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .fpill--tag { font-family: var(--font-mono); }
-.fpill--tag.is-active { background: var(--text); border-color: var(--text); color: #fff; }
-[data-theme="dark"] .fpill--tag.is-active { background: #181657; border-color: #181657; color: #e6edf3; }
+.fpill--tag.is-active { background: #1063C9; border-color: #1063C9; color: #fff; }
+[data-theme="dark"] .fpill--tag.is-active { background: #1063C9; border-color: #1063C9; color: #e6edf3; }
 .fpill--clear { background: transparent; border-color: var(--neg); color: var(--neg); font-weight: 700; padding: 2px 8px; }
 .fpill--clear:hover { background: var(--neg); color: #fff; }
 .fpill-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
