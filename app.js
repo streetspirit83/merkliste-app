@@ -793,7 +793,6 @@ const Render = {
     this.bucket();
     this.menu();
     this.bulkbar();
-    this.filterBtn();
     this.filterBar();
     renderBenchBar();
     const av = Store.state.ui.activeView;
@@ -860,9 +859,6 @@ const Render = {
     const rbf = $("#bulk-refresh-full");
     if (rb)  { rb.title  = `Quick: ${n} ausgewählte — nur Kurs`;             rb.disabled  = n === 0; }
     if (rbf) { rbf.title = `Full: ${n} ausgewählte — Kurs + Historie (MA/RSI)`; rbf.disabled = n === 0; }
-  },
-  filterBtn() {
-    $("#btn-filter-trig").setAttribute("aria-pressed", !!Store.state.ui.triggeredOnly);
   },
   filterBar() {
     const host = $("#filter-bar");
@@ -2588,10 +2584,6 @@ function bindEvents() {
   $("#btn-element-table-view").addEventListener("click", () => { Store.patchUi({ view: "table" }); Render.viewMode(); });
   $("#btn-element-refresh")     .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "flat" }));
   $("#btn-element-fullrefresh") .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "full" }));
-  $("#btn-filter-trig")         .addEventListener("click", () => {
-    Store.patchUi({ triggeredOnly: !Store.state.ui.triggeredOnly });
-    Render.filterBtn(); Render.bucket();
-  });
 
   // tag input in edit modal
   $("#edit-tags").addEventListener("keydown", e => {
