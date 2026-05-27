@@ -1403,32 +1403,7 @@ function renderCards() {
     return;
   }
   const tpl = bucket === "portfolio" ? cardPortfolio : cardDefault;
-  const selSet = new Set(Store.state.ui.selected);
-  const visIds = rows.map(r => r.id);
-  const selCount = visIds.filter(id => selSet.has(id)).length;
-  const allSel = selCount === visIds.length && visIds.length > 0;
-  const someSel = selCount > 0 && !allSel;
-  const headHtml = `<div class="card-list__head">
-    <label class="card-list__select">
-      <input type="checkbox" id="cards-select-all" ${allSel ? "checked" : ""} aria-label="Alle wählen / Auswahl aufheben" />
-      ${selCount > 0 ? `<span>${selCount} gewählt</span>` : ""}
-    </label>
-  </div>`;
-  host.innerHTML = headHtml + rows.map(tpl).join("");
-  const selAll = $("#cards-select-all");
-  if (selAll) {
-    selAll.indeterminate = someSel;
-    selAll.addEventListener("click", e => {
-      e.stopPropagation();
-      const shouldSelectAll = selCount === 0;
-      let sel = Store.state.ui.selected.filter(id => !visIds.includes(id));
-      if (shouldSelectAll) sel = [...sel, ...visIds];
-      Store.patchUi({ selected: sel });
-      renderCards();
-      Render.bulkbar();
-    });
-  }
-
+  host.innerHTML = rows.map(tpl).join("");
   host.querySelectorAll(".btn-info").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openInfo(e.currentTarget.dataset.id); }));
   host.querySelectorAll(".btn-edit").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openEdit(e.currentTarget.dataset.id); }));
   host.querySelectorAll(".btn-nk")  .forEach(b => b.addEventListener("click", e => { e.stopPropagation(); openNachkauf(e.currentTarget.dataset.id); }));
