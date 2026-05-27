@@ -751,7 +751,7 @@ function flat(t) {
   return {
     id: t.id, _raw: t,
     symbol: s.symbol, name: s.name, exchange: s.exchange,
-    asset_type: s.asset_type, sector: s.sector, currency: s.currency,
+    asset_type: s.asset_type, sector: s.sector, sub_sector: s.sub_sector, market_cap_size: s.market_cap_size, currency: s.currency,
     tradingview_url: s.tradingview_url || null,
     stocktwits_url: s.stocktwits_url || `https://stocktwits.com/symbol/${s.symbol}`,
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
@@ -800,6 +800,8 @@ const Render = {
       else renderPortfolioPerf();
     } else if (av === "dashboard") {
       renderDashboard();
+    } else if (av === "analyse") {
+      renderAnalyse();
     }
   },
   viewMode() {
@@ -807,6 +809,7 @@ const Render = {
     const inScreener  = activeView === "screener";
     const inPortfolio = activeView === "portfolio";
     const inDashboard = activeView === "dashboard";
+    const inAnalyse   = activeView === "analyse";
     const showBench   = inScreener && view === "table";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
@@ -816,6 +819,7 @@ const Render = {
     $("#view-screener").hidden   = !inScreener;
     $("#view-portfolio").hidden  = !inPortfolio;
     $("#view-dashboard").hidden  = !inDashboard;
+    $("#view-analyse").hidden    = !inAnalyse;
     if (inScreener) {
       $("#screener-card-view") .hidden = view !== "cards";
       $("#screener-table-view").hidden = view !== "table";
@@ -1214,6 +1218,11 @@ function maValueCol(t) {
   </div>`;
 }
 
+function _tagPills(t) {
+  if (!t.tags || !t.tags.length) return "";
+  return `<div class="tcard__tags">${t.tags.map(tag => `<span class="tag-pill tag-pill--sm">${escapeHtml(tag)}</span>`).join("")}</div>`;
+}
+
 function _cardBody(t) {
   return `<div class="tcard__body">
     <div class="tcard__chart">
@@ -1225,6 +1234,7 @@ function _cardBody(t) {
     <div class="tcard__metrics">
       ${[rsiChip(t), volChip(t), trendChip(t)].filter(Boolean).map(h => `<div>${h}</div>`).join("")}
     </div>
+    ${_tagPills(t)}
   </div>`;
 }
 
@@ -1510,6 +1520,7 @@ function openEdit(id) {
   $("#edit-entry-price").value  = t.user.entry_price_manual != null ? t.user.entry_price_manual : "";
   $("#edit-entry-shares").value = t.user.entry_shares != null ? t.user.entry_shares : "";
   $("#edit-notes").value = t.user.notes || "";
+  renderTagEditor(t.user.tags || []);
   $("#edit-td-symbol").value = t.stamm.twelvedata_symbol || t.stamm.symbol || "";
   $("#edit-td-mic").value    = t.stamm.twelvedata_mic_code || "";
   $("#edit-yahoo-symbol").value = t.stamm.yahoo_symbol || "";
@@ -1843,6 +1854,7 @@ function saveEdit() {
   const sh = $("#edit-entry-shares").value;
   t.user.entry_shares = sh === "" ? null : +sh;
   t.user.notes = $("#edit-notes").value;
+  t.user.tags  = collectTagsFromEditor();
   const tdSym = $("#edit-td-symbol").value.trim();
   const tdMic = $("#edit-td-mic").value.trim();
   const ySym  = $("#edit-yahoo-symbol").value.trim();
@@ -1906,6 +1918,58 @@ function deleteEntry() {
   closeModal("#modal-edit");
   Render.all();
   toast("Gelöscht", "neg");
+}
+
+/* ─── TAG EDITOR ─── */
+const MAX_TAGS = 6;
+let _editTags = [];
+
+function renderTagEditor(tags) {
+  _editTags = [...(tags || [])].slice(0, MAX_TAGS);
+  _renderTagPills();
+}
+
+function _renderTagPills() {
+  const wrap = $("#edit-tags-wrap");
+  wrap.innerHTML = _editTags.map((tag, i) =>
+    `<span class="tag-pill">${escapeHtml(tag)}<button class="tag-pill__x" data-idx="${i}" title="Entfernen">&times;</button></span>`
+  ).join("");
+  wrap.querySelectorAll(".tag-pill__x").forEach(btn => {
+    btn.addEventListener("click", () => {
+      _editTags.splice(+btn.dataset.idx, 1);
+      _renderTagPills();
+    });
+  });
+  $("#edit-tags").disabled = _editTags.length >= MAX_TAGS;
+}
+
+function _addTag(raw) {
+  const tag = raw.trim().toLowerCase().slice(0, 30);
+  if (!tag || _editTags.includes(tag) || _editTags.length >= MAX_TAGS) return;
+  _editTags.push(tag);
+  _renderTagPills();
+  $("#edit-tags").value = "";
+}
+
+function collectTagsFromEditor() { return [..._editTags]; }
+
+/* ─── BULK TAG ─── */
+function bulkTagPrompt() {
+  const sel = Store.state.ui.selected;
+  if (!sel.length) return;
+  const tag = prompt("Tag zuweisen (leer = entfernen):");
+  if (tag === null) return;
+  const clean = tag.trim().toLowerCase().slice(0, 30);
+  sel.forEach(id => {
+    const t = Store.byId(id);
+    if (!t) return;
+    if (!Array.isArray(t.user.tags)) t.user.tags = [];
+    if (clean === "") return;
+    if (!t.user.tags.includes(clean) && t.user.tags.length < MAX_TAGS) t.user.tags.push(clean);
+  });
+  Store.save();
+  Render.bucket();
+  toast(clean ? `Tag "${clean}" → ${sel.length} Ticker` : "Tags nicht geändert", "pos");
 }
 
 /* ─── NACHKAUF modal ─── */
@@ -2466,7 +2530,14 @@ function bindEvents() {
     Render.filterBtn(); Render.bucket();
   });
 
+  // tag input in edit modal
+  $("#edit-tags").addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); _addTag(e.target.value); }
+  });
+  $("#edit-tags").addEventListener("blur", e => { if (e.target.value.trim()) _addTag(e.target.value); });
+
   // bulkbar
+  $("#bulk-tag")           .addEventListener("click", bulkTagPrompt);
   $("#bulk-refresh")     .addEventListener("click", bulkRefresh);
   $("#bulk-refresh-full").addEventListener("click", bulkRefreshFull);
   $("#bulk-delete") .addEventListener("click", bulkDelete);
@@ -2490,6 +2561,7 @@ function bindEvents() {
   $("#menu-nav-btn-screener")  .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("screener"); });
   $("#menu-nav-btn-dashboard") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("dashboard"); });
   $("#menu-nav-btn-portfolio") .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("portfolio"); });
+  $("#menu-nav-btn-analyse")  .addEventListener("click", () => { Store.patchUi({ menuOpen:false }); Render.menu(); switchView("analyse"); });
   document.addEventListener("click", e => {
     const tab = e.target.closest(".pf-tab");
     if (tab) switchPfTab(tab.dataset.pftab);
@@ -2615,6 +2687,8 @@ function switchView(view) {
     else renderPortfolioPerf();
   } else if (view === "dashboard") {
     renderDashboard();
+  } else if (view === "analyse") {
+    renderAnalyse();
   }
 }
 
@@ -3225,6 +3299,206 @@ function renderDashboard() {
       sec.querySelector(".dash-k3").hidden = mode !== "k3";
     });
   });
+}
+
+/* ════════════════════════════════════════════════════
+   SECTION 8b — ANALYSE (B+D: Tags, Sektor, Size Screener)
+   ════════════════════════════════════════════════════ */
+
+let _analyseFilter = "all";
+let _analyseAsset  = "";
+let _analyseGroupBy = "tags";
+
+function _analyseRows() {
+  let rows = Store.state.tickers.map(t => ({ t, f: flat(t) })).filter(r => r.f.price != null);
+  if (_analyseFilter === "portfolio") rows = rows.filter(r => r.f.bucket === "portfolio");
+  else if (_analyseFilter === "watch") rows = rows.filter(r => r.f.bucket === "watchlist" || r.f.bucket === "neutral");
+  if (_analyseAsset) rows = rows.filter(r => (r.f.asset_type || "").toLowerCase() === _analyseAsset.toLowerCase());
+  return rows;
+}
+
+function _allTags() {
+  const tags = new Set();
+  Store.state.tickers.forEach(t => (t.user.tags || []).forEach(tag => tags.add(tag)));
+  return [...tags].sort();
+}
+
+function _allAssetTypes() {
+  const types = new Set();
+  Store.state.tickers.forEach(t => { if (t.stamm.asset_type) types.add(t.stamm.asset_type); });
+  return [...types].sort();
+}
+
+function _groupRows(rows, key) {
+  const groups = new Map();
+  rows.forEach(r => {
+    let vals;
+    if (key === "tags") {
+      vals = (r.f.tags && r.f.tags.length) ? r.f.tags : ["(ohne Tag)"];
+    } else if (key === "sector") {
+      vals = [r.f.sector || "(ohne Sektor)"];
+    } else {
+      vals = [r.f.market_cap_size || "(ohne Size)"];
+    }
+    vals.forEach(v => {
+      if (!groups.has(v)) groups.set(v, []);
+      groups.get(v).push(r);
+    });
+  });
+  return [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+}
+
+function _clusterMetrics(rows) {
+  const vals = (field) => rows.map(r => r.f[field]).filter(v => v != null);
+  const avg = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+  return {
+    count:      rows.length,
+    perf_pct:   avg(vals("performance_pct")),
+    sentiment:  avg(vals("sentiment_score")),
+    rsi:        avg(vals("rsi")),
+    month_pct:  avg(vals("month_change_pct")),
+    ma50_delta: avg(vals("ma50_delta_pct")),
+    ma200_delta:avg(vals("ma200_delta_pct")),
+  };
+}
+
+function _heatCell(val) {
+  if (val == null) return `<td class="an-heat an-heat--na">—</td>`;
+  const alpha = Math.min(Math.abs(val) / 10, 0.85);
+  const color = val >= 0 ? `rgba(53,133,53,${alpha.toFixed(2)})` : `rgba(239,66,66,${alpha.toFixed(2)})`;
+  return `<td class="an-heat" style="background:${color}">${val >= 0 ? "+" : ""}${val.toFixed(1)}</td>`;
+}
+
+function _analyseTreemap(rows, label) {
+  const W = 320, H = 140;
+  const items = rows.map(r => {
+    const w = r.f.bucket === "portfolio" && r.f.position_value ? r.f.position_value : 1;
+    return { ...r.f, weight: Math.max(w, 0.01) };
+  });
+  const total = items.reduce((s, i) => s + i.weight, 0);
+  const mapped = items.map(i => ({ ...i, area: (i.weight / total) * W * H })).sort((a, b) => b.area - a.area);
+  const rects = [];
+  squarify(mapped, { x1: 0, y1: 0, x2: W, y2: H }, rects);
+  if (!rects.length) return "";
+  return `<div class="an-treemap-wrap">
+    <div class="an-treemap-label">${escapeHtml(label)}</div>
+    <svg class="an-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      ${rects.map(r => {
+        const m = r.month_change_pct;
+        const fill = m == null ? "var(--border)" : m >= 0
+          ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(m) / 15, 0.9).toFixed(2)})`
+          : `rgba(239,66,66,${Math.min(0.2 + Math.abs(m) / 15, 0.9).toFixed(2)})`;
+        const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
+        return `<g>
+          <rect x="${r.x1 + 1}" y="${r.y1 + 1}" width="${Math.max(fw - 2, 0)}" height="${Math.max(fh - 2, 0)}" rx="3" fill="${fill}" stroke="var(--bg)" stroke-width="1.5"/>
+          ${fw > 36 && fh > 18 ? `<text x="${r.x1 + fw / 2}" y="${r.y1 + fh / 2}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw / 6, 11)}" font-weight="600" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
+        </g>`;
+      }).join("")}
+    </svg>
+  </div>`;
+}
+
+function _analyseGroupSection(label, rows) {
+  const m = _clusterMetrics(rows);
+  const treemap = rows.length > 1 ? _analyseTreemap(rows, label) : "";
+  const tickers = rows.map(r => r.f.symbol).join(", ");
+  return `<div class="an-group">
+    <div class="an-group__head">
+      <span class="an-group__label">${escapeHtml(label)}</span>
+      <span class="an-group__count">${m.count}</span>
+    </div>
+    ${treemap}
+    <div class="an-group__tickers">${escapeHtml(tickers)}</div>
+  </div>`;
+}
+
+function renderAnalyse() {
+  const host = $("#analyse-root");
+  if (!host) return;
+  const rows = _analyseRows();
+  const assetTypes = _allAssetTypes();
+  const grouped = _groupRows(rows, _analyseGroupBy);
+  const groupLabels = { tags: "Tag-Cluster", sector: "Sektor", size: "Marktkapitalisierung" };
+
+  const filterPills = ["all", "portfolio", "watch"].map(f => {
+    const labels = { all: "Alle", portfolio: "Portfolio", watch: "Watch" };
+    const active = _analyseFilter === f ? " is-active" : "";
+    return `<button class="an-pill${active}" data-an-filter="${f}">${labels[f]}</button>`;
+  }).join("");
+
+  const assetOpts = [`<option value="">Alle Typen</option>`]
+    .concat(assetTypes.map(a => `<option value="${a}"${_analyseAsset === a ? " selected" : ""}>${a}</option>`))
+    .join("");
+
+  const groupTabs = ["tags", "sector", "size"].map(g => {
+    const labels = { tags: "Tags", sector: "Sektor", size: "Size" };
+    const active = _analyseGroupBy === g ? " is-active" : "";
+    return `<button class="an-pill${active}" data-an-group="${g}">${labels[g]}</button>`;
+  }).join("");
+
+  const metricCols = [
+    { key: "count",      label: "#" },
+    { key: "perf_pct",   label: "Ø Perf %" },
+    { key: "sentiment",  label: "Ø Sent." },
+    { key: "rsi",        label: "Ø RSI" },
+    { key: "month_pct",  label: "Ø 1M %" },
+    { key: "ma50_delta", label: "Ø MA50Δ" },
+    { key: "ma200_delta",label: "Ø MA200Δ" },
+  ];
+
+  const metricsHead = metricCols.map(c => `<th class="an-th">${c.label}</th>`).join("");
+  const metricsBody = grouped.map(([label, gRows]) => {
+    const m = _clusterMetrics(gRows);
+    const cells = metricCols.map(c => {
+      const v = m[c.key];
+      if (c.key === "count") return `<td class="an-td">${v}</td>`;
+      return _heatCell(v);
+    }).join("");
+    return `<tr><td class="an-td an-td--label">${escapeHtml(label)}</td>${cells}</tr>`;
+  }).join("");
+
+  const heatmapSection = grouped.length ? `
+    <div class="an-section">
+      <div class="an-section__title">Heatmap – ${groupLabels[_analyseGroupBy]}</div>
+      <div class="an-tbl-wrap">
+        <table class="an-tbl">
+          <thead><tr><th class="an-th">${groupLabels[_analyseGroupBy]}</th>${metricsHead}</tr></thead>
+          <tbody>${metricsBody}</tbody>
+        </table>
+      </div>
+    </div>` : "";
+
+  const treemapSections = grouped.map(([label, gRows]) => _analyseGroupSection(label, gRows)).join("");
+
+  host.innerHTML = `<div class="an">
+    <div class="an-bar">
+      <div class="an-pills">${filterPills}</div>
+      <select class="an-select" id="an-asset-select">${assetOpts}</select>
+    </div>
+    <div class="an-bar">
+      <span class="an-bar__label">Gruppieren:</span>
+      <div class="an-pills">${groupTabs}</div>
+      <span class="an-bar__info">${rows.length} Ticker</span>
+    </div>
+
+    ${heatmapSection}
+
+    <div class="an-section">
+      <div class="an-section__title">Cluster – ${groupLabels[_analyseGroupBy]}</div>
+      <div class="an-groups">${treemapSections || '<div class="an-empty">Keine Daten für diese Filter</div>'}</div>
+    </div>
+  </div>`;
+
+  host.querySelectorAll("[data-an-filter]").forEach(btn => {
+    btn.addEventListener("click", () => { _analyseFilter = btn.dataset.anFilter; renderAnalyse(); });
+  });
+  host.querySelectorAll("[data-an-group]").forEach(btn => {
+    btn.addEventListener("click", () => { _analyseGroupBy = btn.dataset.anGroup; renderAnalyse(); });
+  });
+  const assetSel = host.querySelector("#an-asset-select");
+  if (assetSel) assetSel.addEventListener("change", () => { _analyseAsset = assetSel.value; renderAnalyse(); });
+
+  if (window.lucide) lucide.createIcons();
 }
 
 /* ════════════════════════════════════════════════════

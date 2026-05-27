@@ -104,6 +104,10 @@
     <section id="view-dashboard" data-view="dashboard" hidden>
       <div id="dashboard-root"></div>
     </section>
+
+    <section id="view-analyse" data-view="analyse" hidden>
+      <div id="analyse-root"></div>
+    </section>
   </main>
 
   <!-- ════════════ BULK BAR (sticky strip above bottom-nav, when selection > 0) ════════════ -->
@@ -124,6 +128,11 @@
     <button class="bulkbar__btn" id="bulk-to-neutral" data-bucket="neutral" title="In Neutral verschieben">
       <i data-lucide="inbox" class="icon icon-sm"></i>
       <span class="bulkbar__label">Neutral</span>
+    </button>
+    <span class="bulkbar__sep"></span>
+    <button class="bulkbar__btn" id="bulk-tag" title="Tag zuweisen" aria-label="Tag zuweisen">
+      <i data-lucide="tag" class="icon icon-sm"></i>
+      <span class="bulkbar__label">Tag</span>
     </button>
     <span class="bulkbar__sep"></span>
     <button class="bulkbar__btn" id="bulk-refresh" title="Quick-Refresh: nur Kurs" aria-label="Quick-Refresh">
@@ -241,6 +250,12 @@
     <div class="modal__field">
       <label for="edit-notes">Notizen</label>
       <textarea id="edit-notes" style="min-height:60px"></textarea>
+    </div>
+
+    <div class="modal__field">
+      <label for="edit-tags">Tags <span class="field-hint">(max 6, Enter/Komma trennt)</span></label>
+      <div class="tag-input-wrap" id="edit-tags-wrap"></div>
+      <input id="edit-tags" type="text" placeholder="Tag eingeben…" autocomplete="off" />
     </div>
 
     <!-- Twelve Data overrides (single-call fields) -->
@@ -441,6 +456,9 @@
   </button>
   <button class="sheet__item" id="menu-nav-btn-portfolio">
     <i data-lucide="bar-chart-2" class="icon"></i> Portfolio Performance
+  </button>
+  <button class="sheet__item" id="menu-nav-btn-analyse">
+    <i data-lucide="scan-search" class="icon"></i> Analyse
   </button>
   <button class="sheet__item" id="menu-nav-btn-config">
     <i data-lucide="settings" class="icon"></i> API Config
