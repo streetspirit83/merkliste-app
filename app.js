@@ -34,7 +34,7 @@ const CONFIG = {
 
 /* helper: build empty quote+calc shells so render-functions never see undefined */
 const emptyQuotes = () => ({
-  price: null, currency_returned: null, day_change_pct: null,
+  price: null, currency_returned: null, day_change_pct: null, month_change_pct: null,
   volume: null, avg_volume: null, pos_52whigh: null, pos_52low: null, high_52w: null, low_52w: null,
   rsi: null, macd: null, macd_signal: null, macd_histogram: null,
   ma20: null, ma20_delta_pct: null,
@@ -649,7 +649,10 @@ const Calc = {
       ma20, ma20_delta_pct:  delta(last, ma20),
       ma50, ma50_delta_pct:  delta(last, ma50),
       ma200, ma200_delta_pct: delta(last, ma200),
-      rsi, macd, macd_signal, macd_histogram
+      rsi, macd, macd_signal, macd_histogram,
+      month_change_pct: closes.length >= 22
+        ? +((last - closes[closes.length - 22]) / closes[closes.length - 22] * 100).toFixed(2)
+        : null
     };
   },
 
@@ -754,7 +757,7 @@ function flat(t) {
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
     entry_price_manual: u.entry_price_manual, entry_shares: u.entry_shares,
     alerts: u.alerts || [],
-    price, currency_returned: displayCcy, day_change_pct: q.day_change_pct,
+    price, currency_returned: displayCcy, day_change_pct: q.day_change_pct, month_change_pct: q.month_change_pct ?? null,
     volume: q.volume, avg_volume: q.avg_volume,
     pos_52whigh: q.pos_52whigh, pos_52low: q.pos_52low,
     high_52w: toEur(q.high_52w), low_52w: toEur(q.low_52w),
@@ -937,6 +940,8 @@ const COLS_PORTFOLIO_EXTRA = [
   { key:"position_pl_abs", label:"P/L",      cell: t => `<span class="${signCls(t.position_pl_abs)}">${numFmt(t.position_pl_abs)}</span>` }
 ];
 const COLS_TAIL = [
+  { key:"month_change_pct", label:"1M %",
+    cell: t => `<span class="${signCls(t.month_change_pct)}">${pctFmt(t.month_change_pct)}</span>` },
   { key:"ma20_delta_pct",  label:"MA20 Δ",  cell: t => `<span class="${signCls(t.ma20_delta_pct)}">${pctFmt(t.ma20_delta_pct)}</span>` },
   { key:"ma20",            label:"MA20",    cell: t => `<span class="dim">${numFmt(t.ma20, 2)}</span>` },
   { key:"ma50_delta_pct",  label:"MA50 Δ",  cell: t => `<span class="${signCls(t.ma50_delta_pct)}">${pctFmt(t.ma50_delta_pct)}</span>` },
@@ -1308,7 +1313,7 @@ function renderCards() {
   const headHtml = `<div class="card-list__head">
     <label class="card-list__select">
       <input type="checkbox" id="cards-select-all" ${allSel ? "checked" : ""} aria-label="Alle wählen / Auswahl aufheben" />
-      <span>${selCount > 0 ? `${selCount} gewählt — Auswahl aufheben` : "Alle wählen"}</span>
+      ${selCount > 0 ? `<span>${selCount} gewählt</span>` : ""}
     </label>
   </div>`;
   host.innerHTML = headHtml + rows.map(tpl).join("");
@@ -3543,10 +3548,7 @@ function init() {
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
-  /* On-Load Refresh: Portfolio+Watchlist non-US + Neutral all via Yahoo;
-     Portfolio+Watchlist US via TD (flat). Yahoo + TD parallel. */
-  /* Initial flat refresh on page load (Portfolio → Watchlist, Yahoo + throttled TD) */
-  smartRefresh({ scope: "onload", tdMode: "flat", yahooMode: "full" });
+  /* Auto-Refresh on load deaktiviert — manuell via ⟳ Buttons */
 }
 // ES modules are deferred — DOM is already parsed when this runs
 if (document.readyState === "loading") {
