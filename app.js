@@ -71,6 +71,8 @@ const Schema = {
     sortKey:     "day_change_pct",
     sortDir:     "desc",
     triggeredOnly: false,
+    filterAsset:   "",           // "" | "ETF" | "Aktie" etc.
+    filterTag:     "",           // "" | tag string
     selected:    [],          // array of ticker ids
     editingId:   null,
     nachkaufId:  null
@@ -792,6 +794,7 @@ const Render = {
     this.menu();
     this.bulkbar();
     this.filterBtn();
+    this.filterBar();
     renderBenchBar();
     const av = Store.state.ui.activeView;
     if (av === "portfolio") {
@@ -814,6 +817,7 @@ const Render = {
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
     $("#subbar").hidden          = !inScreener;
+    $("#filterbar").hidden       = !inScreener;
     $("#pfbar").hidden           = !inPortfolio;
     $("#benchbar").hidden        = !showBench;
     $("#view-screener").hidden   = !inScreener;
@@ -859,6 +863,48 @@ const Render = {
   },
   filterBtn() {
     $("#btn-filter-trig").setAttribute("aria-pressed", !!Store.state.ui.triggeredOnly);
+  },
+  filterBar() {
+    const host = $("#filter-bar");
+    if (!host) return;
+    const { filterAsset, filterTag } = Store.state.ui;
+    const assetTypes = _allAssetTypes();
+    const tags = _allTags();
+
+    const assetPills = assetTypes.map(a => {
+      const active = filterAsset === a ? " is-active" : "";
+      return `<button class="fpill${active}" data-filter-asset="${a}">${a}</button>`;
+    }).join("");
+
+    const tagPills = tags.map(tag => {
+      const active = filterTag === tag ? " is-active" : "";
+      return `<button class="fpill fpill--tag${active}" data-filter-tag="${tag}">${tag}</button>`;
+    }).join("");
+
+    const clearBtn = (filterAsset || filterTag)
+      ? `<button class="fpill fpill--clear" id="filter-clear" title="Filter zurücksetzen">&times;</button>` : "";
+
+    host.innerHTML = `${assetPills}${tagPills ? `<span class="fpill-sep"></span>${tagPills}` : ""}${clearBtn}`;
+
+    host.querySelectorAll("[data-filter-asset]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const next = filterAsset === btn.dataset.filterAsset ? "" : btn.dataset.filterAsset;
+        Store.patchUi({ filterAsset: next, selected: [] });
+        Render.filterBar(); Render.bucket();
+      });
+    });
+    host.querySelectorAll("[data-filter-tag]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const next = filterTag === btn.dataset.filterTag ? "" : btn.dataset.filterTag;
+        Store.patchUi({ filterTag: next, selected: [] });
+        Render.filterBar(); Render.bucket();
+      });
+    });
+    const clr = host.querySelector("#filter-clear");
+    if (clr) clr.addEventListener("click", () => {
+      Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
+      Render.filterBar(); Render.bucket();
+    });
   }
 };
 
@@ -869,12 +915,14 @@ const numFmt = (v, d = 2) => (v == null || isNaN(v)) ? "—"
   : Number(v).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d });
 const signCls = v => v == null ? "" : (v > 0 ? "pos" : v < 0 ? "neg" : "dim");
 
-/* ────────── visible rows: bucket + triggered-filter ────────── */
+/* ────────── visible rows: bucket + triggered + asset/tag filter ────────── */
 function visibleRows() {
-  const { bucket, triggeredOnly } = Store.state.ui;
+  const { bucket, triggeredOnly, filterAsset, filterTag } = Store.state.ui;
   return Store.state.tickers
     .filter(t => t.user.bucket === bucket)
     .filter(t => !triggeredOnly || (t.calculations && t.calculations.trends && t.calculations.trends.alert_triggered))
+    .filter(t => !filterAsset || (t.stamm.asset_type || "").toLowerCase() === filterAsset.toLowerCase())
+    .filter(t => !filterTag || (t.user.tags || []).includes(filterTag))
     .map(flat);
 }
 
@@ -2829,6 +2877,72 @@ function pfStrategySplit(allPortfolio) {
   </div>`;
 }
 
+let _pfTreemapFilter = "all"; // "all" | "ETF" | "Aktie" etc.
+
+function _pfTreemapSVG(positions, filter) {
+  const filtered = filter === "all" ? positions : positions.filter(t => (t.asset_type || "").toLowerCase() === filter.toLowerCase());
+  if (!filtered.length) return `<div class="an-empty">Keine Positionen für „${filter}"</div>`;
+  const W = 340, H = 160;
+  const treemap = buildTreemap(filtered, W, H);
+  return `<svg class="pf-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    ${treemap.map(r => {
+      const perf = r.performance_pct;
+      const val  = r.position_value;
+      const fill = perf == null ? "var(--border)" : perf >= 0 ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})` : `rgba(239,66,66,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})`;
+      const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
+      return `<g>
+        <rect x="${r.x1+1}" y="${r.y1+1}" width="${fw-2}" height="${fh-2}" rx="4" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
+        ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
+        ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${val != null ? numFmt(val, 0) + "€" : "—"}</text>` : ""}
+      </g>`;
+    }).join("")}
+  </svg>`;
+}
+
+function _pfSektorPie(positions) {
+  const groups = new Map();
+  positions.forEach(t => {
+    const s = t.sector || "(ohne Sektor)";
+    if (!groups.has(s)) groups.set(s, 0);
+    groups.set(s, groups.get(s) + (t.position_value || 0));
+  });
+  const sorted = [...groups.entries()].sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((s, [, v]) => s + v, 0) || 1;
+  const PALETTE = ["#3A82C4","#6EC6E6","#9B6DFF","#F59E0B","#EC4899","#10B981","#EF4444","#8B5CF6","#6366F1","#14B8A6"];
+  const CX = 56, CY = 56, RO = 50, RI = 22;
+  let angle = -Math.PI / 2;
+  const slices = sorted.map(([label, val], i) => {
+    const pct = val / total;
+    const a = pct * 2 * Math.PI;
+    const end = angle + a;
+    if (pct < 0.005) { angle = end; return null; }
+    const x1o = CX + RO * Math.cos(angle), y1o = CY + RO * Math.sin(angle);
+    const x2o = CX + RO * Math.cos(end),   y2o = CY + RO * Math.sin(end);
+    const x1i = CX + RI * Math.cos(angle), y1i = CY + RI * Math.sin(angle);
+    const x2i = CX + RI * Math.cos(end),   y2i = CY + RI * Math.sin(end);
+    const lg  = a > Math.PI ? 1 : 0;
+    const d = `M${x1i.toFixed(1)},${y1i.toFixed(1)} L${x1o.toFixed(1)},${y1o.toFixed(1)} A${RO},${RO},0,${lg},1,${x2o.toFixed(1)},${y2o.toFixed(1)} L${x2i.toFixed(1)},${y2i.toFixed(1)} A${RI},${RI},0,${lg},0,${x1i.toFixed(1)},${y1i.toFixed(1)} Z`;
+    angle = end;
+    return { label, pct, d, color: PALETTE[i % PALETTE.length] };
+  }).filter(Boolean);
+
+  const donut = `<svg viewBox="0 0 112 112" width="112" height="112" style="flex-shrink:0">
+    ${slices.map(s => `<path d="${s.d}" fill="${s.color}" opacity=".85"/>`).join("")}
+  </svg>`;
+
+  const legend = slices.map(s =>
+    `<div class="pf-pie__leg"><span class="pf-pie__dot" style="background:${s.color}"></span>${s.label} <span class="dim">${Math.round(s.pct * 100)}%</span></div>`
+  ).join("");
+
+  return `<div class="pf-section">
+    <div class="pf-section__title">Sektor-Verteilung</div>
+    <div class="pf-pie">
+      ${donut}
+      <div class="pf-pie__legend">${legend}</div>
+    </div>
+  </div>`;
+}
+
 function renderPortfolioPerf() {
   const host = $("#portfolio-perf-root");
   if (!host) return;
@@ -2847,8 +2961,12 @@ function renderPortfolioPerf() {
   const totalPlAbs = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
   const totalPlPct = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
 
-  const W = 340, H = 160;
-  const treemap = positions.length ? buildTreemap(positions, W, H) : [];
+  const assetTypes = [...new Set(positions.map(t => t.asset_type).filter(Boolean))].sort();
+  const tmTabs = ["all", ...assetTypes].map(f => {
+    const label = f === "all" ? "Alle" : f;
+    const active = _pfTreemapFilter === f ? " is-active" : "";
+    return `<button class="fpill${active}" data-pf-tm="${f}">${label}</button>`;
+  }).join("");
 
   host.innerHTML = `
     <div class="pf-summary">
@@ -2861,25 +2979,24 @@ function renderPortfolioPerf() {
         <span class="pf-summary__val ${signCls(totalPlAbs)}">${signedNum(totalPlAbs, 0)} (${totalPlPct != null ? signedNum(totalPlPct, 2, "%") : "—"})</span>
       </div>
     </div>
-    ${treemap.length ? `<div class="pf-treemap-wrap">
-      <svg class="pf-treemap" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-        ${treemap.map(r => {
-          const perf = r.performance_pct;
-          const val  = r.position_value;
-          const fill = perf == null ? "var(--border)" : perf >= 0 ? `rgba(53,133,53,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})` : `rgba(239,66,66,${Math.min(0.2 + Math.abs(perf)/20, 0.9)})`;
-          const fw = r.x2 - r.x1, fh = r.y2 - r.y1;
-          return `<g>
-            <rect x="${r.x1+1}" y="${r.y1+1}" width="${fw-2}" height="${fh-2}" rx="4" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
-            ${fw > 40 && fh > 22 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2-5}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/6,13)}" font-weight="700" font-family="DM Sans,sans-serif">${r.symbol}</text>` : ""}
-            ${fw > 40 && fh > 36 ? `<text x="${r.x1+fw/2}" y="${r.y1+fh/2+10}" text-anchor="middle" dominant-baseline="middle" fill="var(--text)" font-size="${Math.min(fw/7,10)}" font-family="DM Mono,monospace">${val != null ? numFmt(val, 0) + "€" : "—"}</text>` : ""}
-          </g>`;
-        }).join("")}
-      </svg>
+    ${positions.length ? `<div class="pf-section">
+      <div class="pf-section__title">
+        TreeMap
+        <span class="pf-section__pills">${tmTabs}</span>
+      </div>
+      <div class="pf-treemap-wrap" id="pf-treemap-host">${_pfTreemapSVG(positions, _pfTreemapFilter)}</div>
     </div>` : ""}
+    ${positions.length ? _pfSektorPie(positions) : ""}
     ${positions.length ? pfWaterfall(positions) : ""}
     ${positions.length ? pfScatterMatrix(positions) : ""}
     ${pfStrategySplit(allPortfolio)}`;
 
+  host.querySelectorAll("[data-pf-tm]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      _pfTreemapFilter = btn.dataset.pfTm;
+      renderPortfolioPerf();
+    });
+  });
   host.querySelectorAll(".pf-split__input").forEach(inp => {
     inp.addEventListener("change", () => {
       const targets = Store.state.config.strategy_targets || {};
