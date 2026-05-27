@@ -871,39 +871,79 @@ const Render = {
     const assetTypes = _allAssetTypes();
     const tags = _allTags();
 
+    // "Alle wählen" checkbox state
+    const rows = visibleRows();
+    const visIds = rows.map(r => r.id);
+    const selSet = new Set(Store.state.ui.selected);
+    const selCount = visIds.filter(id => selSet.has(id)).length;
+    const allSel = selCount === visIds.length && visIds.length > 0;
+    const someSel = selCount > 0 && !allSel;
+
     const assetPills = assetTypes.map(a => {
       const active = filterAsset === a ? " is-active" : "";
-      return `<button class="fpill${active}" data-filter-asset="${a}">${a}</button>`;
+      return `<button class="fpill${active}" data-filter-asset="${escapeHtml(a)}">${escapeHtml(a)}</button>`;
     }).join("");
 
     const tagPills = tags.map(tag => {
       const active = filterTag === tag ? " is-active" : "";
-      return `<button class="fpill fpill--tag${active}" data-filter-tag="${tag}">${tag}</button>`;
+      return `<button class="fpill fpill--tag${active}" data-filter-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
     }).join("");
 
     const clearBtn = (filterAsset || filterTag)
       ? `<button class="fpill fpill--clear" id="filter-clear" title="Filter zurücksetzen">&times;</button>` : "";
 
-    host.innerHTML = `${assetPills}${tagPills ? `<span class="fpill-sep"></span>${tagPills}` : ""}${clearBtn}`;
+    host.innerHTML = `
+      <label class="fbar-selall" title="Alle wählen / Auswahl aufheben">
+        <input type="checkbox" id="fbar-select-all" ${allSel ? "checked" : ""} />
+      </label>
+      <span class="fpill-sep"></span>
+      ${assetPills}${tagPills ? `<span class="fpill-sep"></span>${tagPills}` : ""}${clearBtn}`;
 
+    // "Alle wählen" checkbox: select all visible OR clear pill filter and deselect all
+    const selAllCb = host.querySelector("#fbar-select-all");
+    if (selAllCb) {
+      selAllCb.indeterminate = someSel;
+      selAllCb.addEventListener("click", e => {
+        e.stopPropagation();
+        if (filterAsset || filterTag) {
+          // clear pills and deselect all
+          Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
+          Render.filterBar(); Render.bucket();
+          return;
+        }
+        const shouldSel = selCount === 0;
+        let sel = Store.state.ui.selected.filter(id => !visIds.includes(id));
+        if (shouldSel) sel = [...sel, ...visIds];
+        Store.patchUi({ selected: sel });
+        Render.filterBar(); Render.bucket(); Render.bulkbar();
+      });
+    }
+
+    // pill click → filter + select matching tickers + open bulkbar
     host.querySelectorAll("[data-filter-asset]").forEach(btn => {
       btn.addEventListener("click", () => {
         const next = filterAsset === btn.dataset.filterAsset ? "" : btn.dataset.filterAsset;
-        Store.patchUi({ filterAsset: next, selected: [] });
-        Render.filterBar(); Render.bucket();
+        const matchIds = next
+          ? Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket && (t.stamm.asset_type || "").toLowerCase() === next.toLowerCase()).map(t => t.id)
+          : [];
+        Store.patchUi({ filterAsset: next, filterTag: "", selected: matchIds });
+        Render.filterBar(); Render.bucket(); Render.bulkbar();
       });
     });
     host.querySelectorAll("[data-filter-tag]").forEach(btn => {
       btn.addEventListener("click", () => {
         const next = filterTag === btn.dataset.filterTag ? "" : btn.dataset.filterTag;
-        Store.patchUi({ filterTag: next, selected: [] });
-        Render.filterBar(); Render.bucket();
+        const matchIds = next
+          ? Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket && (t.user.tags || []).includes(next)).map(t => t.id)
+          : [];
+        Store.patchUi({ filterTag: next, filterAsset: "", selected: matchIds });
+        Render.filterBar(); Render.bucket(); Render.bulkbar();
       });
     });
     const clr = host.querySelector("#filter-clear");
     if (clr) clr.addEventListener("click", () => {
       Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
-      Render.filterBar(); Render.bucket();
+      Render.filterBar(); Render.bucket(); Render.bulkbar();
     });
   }
 };
@@ -2899,47 +2939,40 @@ function _pfTreemapSVG(positions, filter) {
   </svg>`;
 }
 
-function _pfSektorPie(positions) {
+function _pfAssetStackedBar(positions) {
+  const total = positions.reduce((s, t) => s + (t.position_value || 0), 0);
+  if (!total) return "";
   const groups = new Map();
   positions.forEach(t => {
-    const s = t.sector || "(ohne Sektor)";
-    if (!groups.has(s)) groups.set(s, 0);
-    groups.set(s, groups.get(s) + (t.position_value || 0));
+    const key = t.asset_type || "Sonstige";
+    groups.set(key, (groups.get(key) || 0) + (t.position_value || 0));
   });
-  const sorted = [...groups.entries()].sort((a, b) => b[1] - a[1]);
-  const total = sorted.reduce((s, [, v]) => s + v, 0) || 1;
-  const PALETTE = ["#3A82C4","#6EC6E6","#9B6DFF","#F59E0B","#EC4899","#10B981","#EF4444","#8B5CF6","#6366F1","#14B8A6"];
-  const CX = 56, CY = 56, RO = 50, RI = 22;
-  let angle = -Math.PI / 2;
-  const slices = sorted.map(([label, val], i) => {
-    const pct = val / total;
-    const a = pct * 2 * Math.PI;
-    const end = angle + a;
-    if (pct < 0.005) { angle = end; return null; }
-    const x1o = CX + RO * Math.cos(angle), y1o = CY + RO * Math.sin(angle);
-    const x2o = CX + RO * Math.cos(end),   y2o = CY + RO * Math.sin(end);
-    const x1i = CX + RI * Math.cos(angle), y1i = CY + RI * Math.sin(angle);
-    const x2i = CX + RI * Math.cos(end),   y2i = CY + RI * Math.sin(end);
-    const lg  = a > Math.PI ? 1 : 0;
-    const d = `M${x1i.toFixed(1)},${y1i.toFixed(1)} L${x1o.toFixed(1)},${y1o.toFixed(1)} A${RO},${RO},0,${lg},1,${x2o.toFixed(1)},${y2o.toFixed(1)} L${x2i.toFixed(1)},${y2i.toFixed(1)} A${RI},${RI},0,${lg},0,${x1i.toFixed(1)},${y1i.toFixed(1)} Z`;
-    angle = end;
-    return { label, pct, d, color: PALETTE[i % PALETTE.length] };
-  }).filter(Boolean);
+  const COLORS = { "ETF": "#3A82C4", "Aktie": "#6EC6E6", "Sonstige": "#9B6DFF" };
+  const DEFAULT_COLORS = ["#F59E0B","#10B981","#EC4899","#EF4444","#8B5CF6"];
+  let ci = 0;
+  const segments = [...groups.entries()].sort((a, b) => b[1] - a[1]).map(([label, val]) => {
+    const pct = (val / total) * 100;
+    const color = COLORS[label] || DEFAULT_COLORS[ci++ % DEFAULT_COLORS.length];
+    return { label, val, pct, color };
+  });
 
-  const donut = `<svg viewBox="0 0 112 112" width="112" height="112" style="flex-shrink:0">
-    ${slices.map(s => `<path d="${s.d}" fill="${s.color}" opacity=".85"/>`).join("")}
-  </svg>`;
+  const bar = segments.map(s =>
+    `<div class="pf-sbar__seg" style="width:${s.pct.toFixed(2)}%;background:${s.color}" title="${s.label}: ${s.pct.toFixed(1)}% · ${numFmt(s.val, 0)}€"></div>`
+  ).join("");
 
-  const legend = slices.map(s =>
-    `<div class="pf-pie__leg"><span class="pf-pie__dot" style="background:${s.color}"></span>${s.label} <span class="dim">${Math.round(s.pct * 100)}%</span></div>`
+  const legend = segments.map(s =>
+    `<div class="pf-sbar__leg">
+      <span class="pf-sbar__dot" style="background:${s.color}"></span>
+      <span class="pf-sbar__lbl">${s.label}</span>
+      <span class="pf-sbar__pct">${s.pct.toFixed(1)}%</span>
+      <span class="pf-sbar__val dim">${numFmt(s.val, 0)}€</span>
+    </div>`
   ).join("");
 
   return `<div class="pf-section">
-    <div class="pf-section__title">Sektor-Verteilung</div>
-    <div class="pf-pie">
-      ${donut}
-      <div class="pf-pie__legend">${legend}</div>
-    </div>
+    <div class="pf-section__title">ETF / Aktie Split</div>
+    <div class="pf-sbar">${bar}</div>
+    <div class="pf-sbar__legends">${legend}</div>
   </div>`;
 }
 
@@ -2956,11 +2989,6 @@ function renderPortfolioPerf() {
     return;
   }
 
-  const totalValue = positions.reduce((s, t) => s + (t.position_value  || 0), 0);
-  const totalCost  = positions.reduce((s, t) => s + ((t.entry_price_manual || 0) * (t.entry_shares || 0)), 0);
-  const totalPlAbs = positions.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
-  const totalPlPct = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
-
   const assetTypes = [...new Set(positions.map(t => t.asset_type).filter(Boolean))].sort();
   const tmTabs = ["all", ...assetTypes].map(f => {
     const label = f === "all" ? "Alle" : f;
@@ -2968,25 +2996,35 @@ function renderPortfolioPerf() {
     return `<button class="fpill${active}" data-pf-tm="${f}">${label}</button>`;
   }).join("");
 
+  // C1: summary filtered by treemap pill
+  const filteredPos = _pfTreemapFilter === "all" ? positions : positions.filter(t => (t.asset_type || "").toLowerCase() === _pfTreemapFilter.toLowerCase());
+  const totalValue = filteredPos.reduce((s, t) => s + (t.position_value  || 0), 0);
+  const totalCost  = filteredPos.reduce((s, t) => s + ((t.entry_price_manual || 0) * (t.entry_shares || 0)), 0);
+  const totalPlAbs = filteredPos.reduce((s, t) => s + (t.position_pl_abs || 0), 0);
+  const totalPlPct = totalCost > 0 ? (totalPlAbs / totalCost) * 100 : null;
+
+  // C3: ETF/Aktie stacked bar
+  const assetSplit = _pfAssetStackedBar(positions);
+
   host.innerHTML = `
-    <div class="pf-summary">
-      <div class="pf-summary__kpi">
-        <span class="pf-summary__label">Gesamtwert</span>
-        <span class="pf-summary__val">${numFmt(totalValue)}</span>
-      </div>
-      <div class="pf-summary__kpi">
-        <span class="pf-summary__label">P/L gesamt</span>
-        <span class="pf-summary__val ${signCls(totalPlAbs)}">${signedNum(totalPlAbs, 0)} (${totalPlPct != null ? signedNum(totalPlPct, 2, "%") : "—"})</span>
-      </div>
-    </div>
-    ${positions.length ? `<div class="pf-section">
+    <div class="pf-section">
       <div class="pf-section__title">
-        TreeMap
+        ${_pfTreemapFilter === "all" ? "Gesamt" : _pfTreemapFilter}
         <span class="pf-section__pills">${tmTabs}</span>
       </div>
+      <div class="pf-summary">
+        <div class="pf-summary__kpi">
+          <span class="pf-summary__label">Gesamtwert</span>
+          <span class="pf-summary__val">${numFmt(totalValue)}</span>
+        </div>
+        <div class="pf-summary__kpi">
+          <span class="pf-summary__label">P/L gesamt</span>
+          <span class="pf-summary__val ${signCls(totalPlAbs)}">${signedNum(totalPlAbs, 0)} (${totalPlPct != null ? signedNum(totalPlPct, 2, "%") : "—"})</span>
+        </div>
+      </div>
       <div class="pf-treemap-wrap" id="pf-treemap-host">${_pfTreemapSVG(positions, _pfTreemapFilter)}</div>
-    </div>` : ""}
-    ${positions.length ? _pfSektorPie(positions) : ""}
+    </div>
+    ${assetSplit}
     ${positions.length ? pfWaterfall(positions) : ""}
     ${positions.length ? pfScatterMatrix(positions) : ""}
     ${pfStrategySplit(allPortfolio)}`;

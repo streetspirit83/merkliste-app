@@ -179,11 +179,14 @@ input, textarea, select { font: inherit; color: inherit; }
 .filterbar { display: flex; align-items: center; padding: 4px var(--s-2); gap: var(--s-1); overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .filterbar:empty, .filterbar__pills:empty { display: none; }
 .filterbar__pills { display: flex; gap: 4px; flex-wrap: nowrap; }
+.fbar-selall { display: flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+.fbar-selall input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
 .fpill { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 14px; padding: 2px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; font-family: var(--font-sans); transition: all .15s; }
 .fpill:hover { border-color: var(--accent); }
 .fpill.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .fpill--tag { font-family: var(--font-mono); }
-.fpill--tag.is-active { background: var(--text); border-color: var(--text); }
+.fpill--tag.is-active { background: var(--text); border-color: var(--text); color: #fff; }
+[data-theme="dark"] .fpill--tag.is-active { background: #181657; border-color: #181657; color: #e6edf3; }
 .fpill--clear { background: transparent; border-color: var(--neg); color: var(--neg); font-weight: 700; padding: 2px 8px; }
 .fpill--clear:hover { background: var(--neg); color: #fff; }
 .fpill-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
@@ -827,10 +830,16 @@ tr.quote-updated td   { animation: quote-flash-row 1.2s ease-out forwards; }
 .pf-section__pills { display: inline-flex; gap: 4px; margin-left: auto; }
 
 /* Sektor Pie */
-.pf-pie { display: flex; align-items: flex-start; gap: var(--s-3); flex-wrap: wrap; }
-.pf-pie__legend { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
-.pf-pie__leg { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.pf-pie__dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+/* ETF/Aktie Stacked Bar */
+.pf-sbar { display: flex; width: 100%; height: 36px; border-radius: 8px; overflow: hidden; margin-bottom: var(--s-2); }
+.pf-sbar__seg { height: 100%; transition: opacity .15s; }
+.pf-sbar__seg:hover { opacity: .8; }
+.pf-sbar__legends { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); }
+.pf-sbar__leg { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.pf-sbar__dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.pf-sbar__lbl { font-weight: 600; }
+.pf-sbar__pct { font-family: var(--font-mono); }
+.pf-sbar__val { font-family: var(--font-mono); font-size: 11px; }
 
 /* P/L Waterfall */
 .pf-waterfall { display: flex; flex-direction: column; gap: 5px; }
