@@ -13,7 +13,7 @@
  */
 
 import { getStore }                  from "@netlify/blobs";
-import { computeStatus, STATUS_MAP, evalAlert } from "./lib/status-logic.js";
+import { computeStatus, STATUS_MAP, evaluateAlerts } from "./lib/status-logic.js";
 import { sendNtfy }                  from "./lib/notify.js";
 
 const NTFY_TOPIC  = process.env.NTFY_TOPIC || "mlst-alerts-h3m8w1";
@@ -154,11 +154,13 @@ export default async () => {
     return new Response("no data", { status: 200 });
   }
 
-  const prevData      = await store.get(STATE_KEY,  { type: "json" }).catch(() => null);
-  const prevState     = prevData?.state ?? {};
-  const prevQData     = await store.get(PREV_KEY,   { type: "json" }).catch(() => null);
-  const prevQuotesMap = prevQData?.quotes ?? {};
-  const prevTrigData  = await store.get(TRIG_KEY,   { type: "json" }).catch(() => null);
+  const [prevData, prevQData, prevTrigData] = await Promise.all([
+    store.get(STATE_KEY, { type: "json" }).catch(() => null),
+    store.get(PREV_KEY,  { type: "json" }).catch(() => null),
+    store.get(TRIG_KEY,  { type: "json" }).catch(() => null),
+  ]);
+  const prevState        = prevData?.state     ?? {};
+  const prevQuotesMap    = prevQData?.quotes   ?? {};
   const prevTriggeredMap = prevTrigData?.triggered ?? {};
 
   // EUR/USD live von Yahoo
@@ -212,11 +214,15 @@ export default async () => {
       ma200:          toEur(ticker.quotes?.ma200 ?? null),
     };
 
-    // Per-alert trigger tracking: detect newly crossing alerts
-    const triggeredAlerts = pushAlerts.filter(a => evalAlert(a, enrichedQ));
-    const prevTrigTypes   = new Set(prevTriggeredMap[ticker.id] ?? []);
-    const newlyTriggered  = triggeredAlerts.filter(a => !prevTrigTypes.has(a.type));
-    newTriggeredMap[ticker.id] = triggeredAlerts.map(a => a.type);
+    // Per-alert trigger tracking — use evaluateAlerts (same group logic as computeStatus)
+    const { alerts: evaledAlerts } = evaluateAlerts(pushAlerts, enrichedQ);
+    const triggeredAlerts = evaledAlerts.filter(a => a._trig);
+
+    // Composite key so two price_below alerts at different thresholds are distinct
+    const alertKey    = a => `${a.type}:${a.threshold ?? ""}:${a.ma ?? ""}`;
+    const prevTrigSet = new Set(prevTriggeredMap[ticker.id] ?? []);
+    const newlyTriggered = triggeredAlerts.filter(a => !prevTrigSet.has(alertKey(a)));
+    newTriggeredMap[ticker.id] = triggeredAlerts.map(alertKey);
 
     const statusChanged = prevKey !== status.key && status.key !== "halten";
     const hasNewTrigger = newlyTriggered.length > 0;
@@ -228,21 +234,28 @@ export default async () => {
       continue;
     }
 
-    const info       = STATUS_MAP[status.key] || STATUS_MAP.halten;
+    const info         = STATUS_MAP[status.key] || STATUS_MAP.halten;
     const alertsForMsg = statusChanged ? triggeredAlerts : newlyTriggered;
+    // When only new alerts crossed (status unchanged) show that clearly in message
+    const transLabel   = statusChanged ? prevKey : `${prevKey} (Neuer Alert)`;
     const title   = `${info.emoji} ${symbol}: ${info.label}`;
-    const message = buildMessage(ticker, status, prevKey, alertsForMsg, enrichedQ);
+    const message = buildMessage(ticker, status, transLabel, alertsForMsg, enrichedQ);
 
     console.log(`[ALERT] ${title}\n${message}`);
     await sendNtfy(NTFY_TOPIC, { title, message, pushColor: info.pushColor });
     pushCount++;
   }
 
-  await Promise.all([
-    store.setJSON(STATE_KEY, { state: newState,              updatedAt: Date.now() }),
-    store.setJSON(PREV_KEY,  { quotes: newPrevQuotes,        updatedAt: Date.now() }),
-    store.setJSON(TRIG_KEY,  { triggered: newTriggeredMap,   updatedAt: Date.now() }),
+  const now = Date.now();
+  const saveResults = await Promise.allSettled([
+    store.setJSON(STATE_KEY, { state: newState,            updatedAt: now }),
+    store.setJSON(PREV_KEY,  { quotes: newPrevQuotes,      updatedAt: now }),
+    store.setJSON(TRIG_KEY,  { triggered: newTriggeredMap, updatedAt: now }),
   ]);
+  saveResults.forEach((r, i) => {
+    if (r.status === "rejected")
+      console.error(`[check-alerts] Blob-Save fehlgeschlagen [${[STATE_KEY, PREV_KEY, TRIG_KEY][i]}]:`, r.reason);
+  });
   console.log(`[check-alerts] Fertig: ${pushCount} Alert(s) gepusht`);
 
   return new Response(JSON.stringify({ alerts: pushCount }), {
