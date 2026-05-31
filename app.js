@@ -21,6 +21,7 @@ const CONFIG = {
     yahoo:      { endpoint: "/.netlify/functions/yahoo-quote" }
   },
   blob: { endpoint: "/.netlify/functions/blob" },
+  discovery: { endpoint: "/.netlify/functions/discovery-import" },
   defaults: {
     view:   "cards",       // "cards" | "table"
     bucket: "portfolio",   // "portfolio" | "watchlist" | "neutral"
@@ -2146,8 +2147,27 @@ function pluck(obj, keys) {
   return out;
 }
 
+/* Screener-Discovery candidate → flat import shape.
+   Lifts nested links/sources into known top-level fields so the generic
+   flat-import path can pick them up. Non-destructive (shallow copy). */
+function flattenDiscoveryCandidate(c) {
+  const out = { ...c };
+  if (c.links) {
+    if (c.links.tradingview && out.tradingview_url == null) out.tradingview_url = c.links.tradingview;
+    if (c.links.stocktwits  && out.stocktwits_url  == null) out.stocktwits_url  = c.links.stocktwits;
+  }
+  if (Array.isArray(c.sources) && c.sources.length) {
+    const snippets = [...new Set(c.sources.map(s => s && s.info_snippet).filter(Boolean))];
+    if (snippets.length && out.trend_reason == null) out.trend_reason = snippets.join(" · ");
+  }
+  return out;
+}
+
 function normalizeImportItem(raw) {
   if (!raw || typeof raw !== "object") return null;
+
+  /* Screener-Discovery candidate: flatten nested links/sources first */
+  if (!raw.stamm && (raw.links || raw.sources)) raw = flattenDiscoveryCandidate(raw);
 
   /* Shape 1: Schema A — already has stamm */
   if (raw.stamm && typeof raw.stamm === "object") {
@@ -2192,6 +2212,7 @@ function importJson(text) {
   if (Array.isArray(parsed))                                     items = parsed;
   else if (Array.isArray(parsed.tickers))                        items = parsed.tickers;
   else if (Array.isArray(parsed.results))                        items = parsed.results;   // Trend-Scout
+  else if (Array.isArray(parsed.candidates))                     items = parsed.candidates; // Screener-Discovery
   else if (Array.isArray(parsed.data))                           items = parsed.data;       // generic
   else if (typeof parsed === "object")                           items = [parsed];          // single-object
   else                                                           items = [];
@@ -2496,6 +2517,30 @@ async function loadBlob({ silent = true } = {}) {
   }
 }
 
+/* ─── DISCOVERY IMPORT (Screener-Discovery export via proxy function) ─── */
+async function importFromDiscovery(btn) {
+  if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
+  try {
+    const res = await fetch(CONFIG.discovery.endpoint, { method: "GET" });
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).error || ""; } catch { /* non-JSON (z.B. GitHub-Pages 404) */ }
+      throw new Error(`HTTP ${res.status}${detail ? ": " + detail : ""}`);
+    }
+    const data = await res.json();
+    const list = Array.isArray(data?.candidates) ? data.candidates
+               : Array.isArray(data)             ? data
+               : null;
+    if (!list || !list.length) { toast("Keine Discovery-Kandidaten gefunden", "neg"); return; }
+    importJson(JSON.stringify(data));   // reuse unified import path (unwraps candidates)
+  } catch (err) {
+    toast("Discovery-Import fehlgeschlagen: " + err.message, "neg");
+    console.warn("[discovery:import]", err);
+  } finally {
+    if (btn) { btn.classList.remove("is-loading"); btn.disabled = false; }
+  }
+}
+
 /* ─── CONFIG modal ─── */
 function openConfig() {
   $("#cfg-twelvedata").value = Store.state.config.twelveDataKey || "";
@@ -2576,6 +2621,7 @@ function bindEvents() {
   // top bar
   $("#btn-blob")       .addEventListener("click", e => saveBlob(e.currentTarget));
   $("#btn-json-import").addEventListener("click", () => openModal("#modal-import"));
+  $("#btn-discovery-import").addEventListener("click", e => importFromDiscovery(e.currentTarget));
   $("#btn-json-export").addEventListener("click", exportJson);
   $("#menu-nav")       .addEventListener("click", () => { Store.patchUi({ menuOpen: !Store.state.ui.menuOpen }); Render.menu(); });
 
