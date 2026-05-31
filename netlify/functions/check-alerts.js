@@ -20,6 +20,7 @@ const NTFY_TOPIC  = process.env.NTFY_TOPIC || "mlst-alerts-h3m8w1";
 const TICKER_KEY  = "main";
 const STATE_KEY   = "alert-state";
 const PREV_KEY    = "prev-quotes";   // Reversal-Alerts: _prev zwischen Runs
+const TRIG_KEY    = "prev-triggered"; // per-alert trigger tracking
 const BATCH_SIZE  = 5;
 const BATCH_PAUSE = 300;
 
@@ -157,6 +158,8 @@ export default async () => {
   const prevState     = prevData?.state ?? {};
   const prevQData     = await store.get(PREV_KEY,   { type: "json" }).catch(() => null);
   const prevQuotesMap = prevQData?.quotes ?? {};
+  const prevTrigData  = await store.get(TRIG_KEY,   { type: "json" }).catch(() => null);
+  const prevTriggeredMap = prevTrigData?.triggered ?? {};
 
   // EUR/USD live von Yahoo
   const eurUsd = await fetchEurUsd();
@@ -169,9 +172,10 @@ export default async () => {
 
   const freshPrices = await batchFetchPrices(alertTickers);
 
-  const newState      = { ...prevState };
-  const newPrevQuotes = {};
-  let   pushCount     = 0;
+  const newState        = { ...prevState };
+  const newPrevQuotes   = {};
+  const newTriggeredMap = {};
+  let   pushCount       = 0;
 
   for (const ticker of alertTickers) {
     const symbol    = ticker.stamm?.symbol;
@@ -208,17 +212,26 @@ export default async () => {
       ma200:          toEur(ticker.quotes?.ma200 ?? null),
     };
 
-    console.log(`[eval] ${symbol}: disp=${dispPrice?.toFixed(2) ?? "—"} perf=${perfPct?.toFixed(1) ?? "—"}% → ${status.key} (prev: ${prevKey})`);
+    // Per-alert trigger tracking: detect newly crossing alerts
+    const triggeredAlerts = pushAlerts.filter(a => evalAlert(a, enrichedQ));
+    const prevTrigTypes   = new Set(prevTriggeredMap[ticker.id] ?? []);
+    const newlyTriggered  = triggeredAlerts.filter(a => !prevTrigTypes.has(a.type));
+    newTriggeredMap[ticker.id] = triggeredAlerts.map(a => a.type);
 
-    if (prevKey === status.key || status.key === "halten") {
+    const statusChanged = prevKey !== status.key && status.key !== "halten";
+    const hasNewTrigger = newlyTriggered.length > 0;
+
+    console.log(`[eval] ${symbol}: disp=${dispPrice?.toFixed(2) ?? "—"} perf=${perfPct?.toFixed(1) ?? "—"}% → ${status.key} (prev: ${prevKey}) newTrig=${newlyTriggered.map(a=>a.type).join(",") || "—"}`);
+
+    if (!statusChanged && !hasNewTrigger) {
       console.log(`[OK]   ${status.emoji} ${symbol}: kein Push`);
       continue;
     }
 
-    const info            = STATUS_MAP[status.key] || STATUS_MAP.halten;
-    const triggeredAlerts = pushAlerts.filter(a => evalAlert(a, enrichedQ));
+    const info       = STATUS_MAP[status.key] || STATUS_MAP.halten;
+    const alertsForMsg = statusChanged ? triggeredAlerts : newlyTriggered;
     const title   = `${info.emoji} ${symbol}: ${info.label}`;
-    const message = buildMessage(ticker, status, prevKey, triggeredAlerts, enrichedQ);
+    const message = buildMessage(ticker, status, prevKey, alertsForMsg, enrichedQ);
 
     console.log(`[ALERT] ${title}\n${message}`);
     await sendNtfy(NTFY_TOPIC, { title, message, pushColor: info.pushColor });
@@ -226,8 +239,9 @@ export default async () => {
   }
 
   await Promise.all([
-    store.setJSON(STATE_KEY, { state: newState, updatedAt: Date.now() }),
-    store.setJSON(PREV_KEY,  { quotes: newPrevQuotes, updatedAt: Date.now() }),
+    store.setJSON(STATE_KEY, { state: newState,              updatedAt: Date.now() }),
+    store.setJSON(PREV_KEY,  { quotes: newPrevQuotes,        updatedAt: Date.now() }),
+    store.setJSON(TRIG_KEY,  { triggered: newTriggeredMap,   updatedAt: Date.now() }),
   ]);
   console.log(`[check-alerts] Fertig: ${pushCount} Alert(s) gepusht`);
 
