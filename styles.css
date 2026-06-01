@@ -57,7 +57,7 @@ input, textarea, select { font: inherit; color: inherit; }
    ════════════════════════════════════════════════════ */
 .app {
   display: grid;
-  grid-template-rows: var(--topbar-h) auto auto 1fr auto var(--botbar-h);
+  grid-template-rows: var(--topbar-h) auto auto auto 1fr auto var(--botbar-h);
   min-height: 100dvh;
   max-width: 720px;
   margin: 0 auto;

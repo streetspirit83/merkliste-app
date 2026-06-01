@@ -2621,7 +2621,7 @@ function bindEvents() {
   // top bar
   $("#btn-blob")       .addEventListener("click", e => saveBlob(e.currentTarget));
   $("#btn-json-import").addEventListener("click", () => openModal("#modal-import"));
-  $("#btn-discovery-import").addEventListener("click", e => importFromDiscovery(e.currentTarget));
+  $("#btn-discovery-import")?.addEventListener("click", e => importFromDiscovery(e.currentTarget));
   $("#btn-json-export").addEventListener("click", exportJson);
   $("#menu-nav")       .addEventListener("click", () => { Store.patchUi({ menuOpen: !Store.state.ui.menuOpen }); Render.menu(); });
 
