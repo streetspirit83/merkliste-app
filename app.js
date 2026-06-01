@@ -592,12 +592,15 @@ const API = {
       const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
       url.searchParams.set("symbol", "EURUSD=X");
       const r = await fetch(url.toString());
-      if (!r.ok) return;
+      if (!r.ok) return false;
       const j = await r.json();
-      const price = j.regularMarketPrice ?? j.price ?? null;
+      if (j.error) return false;
+      // yahoo-quote returns { quote: { regularMarketPrice }, closes }
+      const price = j.quote?.regularMarketPrice ?? j.regularMarketPrice ?? null;
       const rate = price ? +price : null;
-      if (rate && rate > 0) Store.patchConfig({ eur_usd: rate });
-    } catch { /* silent */ }
+      if (rate && rate > 0) { Store.patchConfig({ eur_usd: rate }); return true; }
+      return false;
+    } catch { return false; }
   }
 };
 
@@ -4003,8 +4006,13 @@ function init() {
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
-  /* Auto-fetch EUR/USD via Yahoo proxy so conversion works after cache clear */
-  if (!Store.state.config.eur_usd) API.fetchEurUsdViaYahoo();
+  /* Auto-fetch EUR/USD via Yahoo proxy so conversion works after cache clear.
+     Re-render once the rate arrives, since init() already rendered synchronously. */
+  if (!Store.state.config.eur_usd) {
+    API.fetchEurUsdViaYahoo().then(ok => {
+      if (ok) { Calc.recomputeAll(); Render.all(); }
+    });
+  }
   /* Auto-Refresh on load deaktiviert — manuell via ⟳ Buttons */
 }
 // ES modules are deferred — DOM is already parsed when this runs
