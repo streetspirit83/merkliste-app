@@ -813,13 +813,12 @@ const Render = {
     const inPortfolio = activeView === "portfolio";
     const inDashboard = activeView === "dashboard";
     const inAnalyse   = activeView === "analyse";
-    const showBench   = inScreener && view === "table";
     $("#btn-element-card-view") .setAttribute("aria-pressed", view === "cards");
     $("#btn-element-table-view").setAttribute("aria-pressed", view === "table");
     $("#subbar").hidden          = !inScreener;
     $("#filterbar").hidden       = !inScreener;
     $("#pfbar").hidden           = !inPortfolio;
-    $("#benchbar").hidden        = !showBench;
+    $("#benchbar").hidden        = false;   // Markt-Indikator: immer sichtbar
     $("#view-screener").hidden   = !inScreener;
     $("#view-portfolio").hidden  = !inPortfolio;
     $("#view-dashboard").hidden  = !inDashboard;
