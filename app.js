@@ -584,6 +584,20 @@ const API = {
       const rate = j.rate ? +j.rate : null;
       if (rate && rate > 0) Store.patchConfig({ eur_usd: rate });
     } catch { /* silent — conversion falls back to raw price */ }
+  },
+
+  /* Fetch EUR/USD via Yahoo proxy — no API key required, used on startup fallback */
+  async fetchEurUsdViaYahoo() {
+    try {
+      const url = new URL(CONFIG.api.yahoo.endpoint, location.origin);
+      url.searchParams.set("symbol", "EURUSD=X");
+      const r = await fetch(url.toString());
+      if (!r.ok) return;
+      const j = await r.json();
+      const price = j.regularMarketPrice ?? j.price ?? null;
+      const rate = price ? +price : null;
+      if (rate && rate > 0) Store.patchConfig({ eur_usd: rate });
+    } catch { /* silent */ }
   }
 };
 
@@ -3989,6 +4003,8 @@ function init() {
   console.log("[init] ready", Store.state);
   /* Hybrid sync: load from cloud silently in background, merge if newer */
   loadBlob({ silent: true });
+  /* Auto-fetch EUR/USD via Yahoo proxy so conversion works after cache clear */
+  if (!Store.state.config.eur_usd) API.fetchEurUsdViaYahoo();
   /* Auto-Refresh on load deaktiviert — manuell via ⟳ Buttons */
 }
 // ES modules are deferred — DOM is already parsed when this runs
