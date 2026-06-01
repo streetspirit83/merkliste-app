@@ -72,8 +72,11 @@ const Schema = {
     sortKey:     "day_change_pct",
     sortDir:     "desc",
     triggeredOnly: false,
-    filterAsset:   "",           // "" | "ETF" | "Aktie" etc.
-    filterTag:     "",           // "" | tag string
+    filterAsset:        "",       // "" | "ETF" | "Aktie" etc.
+    filterTag:          "",       // "" | tag string
+    filterSector:       "",       // "" | sector string
+    filterMarketCapSize:"",       // "" | "micro" | "small" | "mid" | "large"
+    tableSection:       "default",// "default" | "technicals" | "fundamentals"
     selected:    [],          // array of ticker ids
     editingId:   null,
     nachkaufId:  null
@@ -761,7 +764,7 @@ const Calc = {
    FLATTEN — present Schema-A ticker as flat row for render
    ════════════════════════════════════════════════════ */
 function flat(t) {
-  const s = t.stamm, u = t.user, q = t.quotes;
+  const s = t.stamm, u = t.user, q = t.quotes, sc = t.screen || {};
   const c = (t.calculations && t.calculations.trends) || {};
   const rate     = Store.state.config.eur_usd;
   const rawCcy   = q.currency_returned || s.currency;
@@ -795,9 +798,38 @@ function flat(t) {
     status_key:   c.status_key   || "halten",
     status_emoji: c.status_emoji || "—",
     status_label: c.status_label || "Halten",
-    smart_alerts: (t.calculations && t.calculations.smart_alerts) || []
+    smart_alerts: (t.calculations && t.calculations.smart_alerts) || [],
+    screen: sc
   };
 }
+
+/* market cap helpers */
+const fmtMarketCap = v => {
+  if (v == null || isNaN(+v)) return "—";
+  const n = +v;
+  if (n >= 1e12) return (n / 1e12).toFixed(1) + "B";
+  if (n >= 1e9)  return (n / 1e9).toFixed(1)  + "Mrd";
+  if (n >= 1e6)  return (n / 1e6).toFixed(1)  + "Mio";
+  return String(Math.round(n));
+};
+const calcMarketCapSize = v => {
+  if (v == null || isNaN(+v)) return null;
+  const n = +v;
+  if (n < 3e8)  return "micro";
+  if (n < 2e9)  return "small";
+  if (n < 5e10) return "mid";
+  return "large";
+};
+const getTickerMarketCapSize = t => {
+  const basic = (t.screen || {}).market_cap_basic;
+  if (basic != null) return calcMarketCapSize(basic);
+  return t.stamm.market_cap_size || null;
+};
+const fmtDate = v => {
+  if (!v) return "—";
+  try { return new Date(v).toLocaleDateString("de-DE", { day:"2-digit", month:"2-digit", year:"numeric" }); }
+  catch { return String(v); }
+};
 
 /* ════════════════════════════════════════════════════
    SECTION 5 — RENDER
@@ -843,6 +875,14 @@ const Render = {
     if (inScreener) {
       $("#screener-card-view") .hidden = view !== "cards";
       $("#screener-table-view").hidden = view !== "table";
+      const tblSec = $("#tbl-sections");
+      if (tblSec) {
+        tblSec.hidden = view !== "table";
+        const { tableSection } = Store.state.ui;
+        tblSec.querySelectorAll(".segment__btn[data-section]").forEach(btn => {
+          btn.setAttribute("aria-pressed", btn.dataset.section === tableSection);
+        });
+      }
     }
   },
   bucket() {
@@ -880,9 +920,14 @@ const Render = {
   filterBar() {
     const host = $("#filter-bar");
     if (!host) return;
-    const { filterAsset, filterTag } = Store.state.ui;
+    const { filterAsset, filterTag, filterSector, filterMarketCapSize, bucket } = Store.state.ui;
     const assetTypes = _allAssetTypes();
     const tags = _allTags();
+
+    /* unique sectors in current bucket */
+    const sectors = [...new Set(
+      Store.state.tickers.filter(t => t.user.bucket === bucket && t.stamm.sector).map(t => t.stamm.sector)
+    )].sort();
 
     // "Alle wählen" checkbox state
     const rows = visibleRows();
@@ -902,7 +947,23 @@ const Render = {
       return `<button class="fpill fpill--tag${active}" data-filter-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
     }).join("");
 
-    const clearBtn = (filterAsset || filterTag)
+    const sectorSelect = sectors.length ? `
+      <select class="fbar-select${filterSector ? " is-active" : ""}" id="fbar-sector" title="Nach Sektor filtern">
+        <option value="">Sektor</option>
+        ${sectors.map(s => `<option value="${escapeHtml(s)}"${filterSector === s ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+      </select>` : "";
+
+    const capSelect = `
+      <select class="fbar-select${filterMarketCapSize ? " is-active" : ""}" id="fbar-marketcap" title="Nach Marktkapitalisierung filtern">
+        <option value="">Mkt-Cap</option>
+        <option value="micro"${filterMarketCapSize === "micro" ? " selected" : ""}>Micro (&lt;300M)</option>
+        <option value="small"${filterMarketCapSize === "small" ? " selected" : ""}>Small (300M–2Mrd)</option>
+        <option value="mid"${filterMarketCapSize === "mid" ? " selected" : ""}>Mid (2–50Mrd)</option>
+        <option value="large"${filterMarketCapSize === "large" ? " selected" : ""}>Large (&gt;50Mrd)</option>
+      </select>`;
+
+    const anyFilter = filterAsset || filterTag || filterSector || filterMarketCapSize;
+    const clearBtn = anyFilter
       ? `<button class="fpill fpill--clear" id="filter-clear" title="Filter zurücksetzen">&times;</button>` : "";
 
     host.innerHTML = `
@@ -910,6 +971,8 @@ const Render = {
         <input type="checkbox" id="fbar-select-all" ${allSel ? "checked" : ""} />
       </label>
       <span class="fpill-sep"></span>
+      ${sectorSelect}${capSelect}
+      ${assetPills || tagPills ? `<span class="fpill-sep"></span>` : ""}
       ${assetPills}${tagPills ? `<span class="fpill-sep"></span>${tagPills}` : ""}${clearBtn}`;
 
     // "Alle wählen" checkbox: select all visible OR clear pill filter and deselect all
@@ -918,9 +981,8 @@ const Render = {
       selAllCb.indeterminate = someSel;
       selAllCb.addEventListener("click", e => {
         e.stopPropagation();
-        if (filterAsset || filterTag) {
-          // clear pills and deselect all
-          Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
+        if (anyFilter) {
+          Store.patchUi({ filterAsset: "", filterTag: "", filterSector: "", filterMarketCapSize: "", selected: [] });
           Render.filterBar(); Render.bucket();
           return;
         }
@@ -932,6 +994,20 @@ const Render = {
       });
     }
 
+    // sector dropdown
+    const secSel = host.querySelector("#fbar-sector");
+    if (secSel) secSel.addEventListener("change", () => {
+      Store.patchUi({ filterSector: secSel.value, filterAsset: "", filterTag: "", selected: [] });
+      Render.filterBar(); Render.bucket(); Render.bulkbar();
+    });
+
+    // market cap dropdown
+    const capSel = host.querySelector("#fbar-marketcap");
+    if (capSel) capSel.addEventListener("change", () => {
+      Store.patchUi({ filterMarketCapSize: capSel.value, filterAsset: "", filterTag: "", selected: [] });
+      Render.filterBar(); Render.bucket(); Render.bulkbar();
+    });
+
     // pill click → filter + select matching tickers + open bulkbar
     host.querySelectorAll("[data-filter-asset]").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -939,7 +1015,7 @@ const Render = {
         const matchIds = next
           ? Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket && (t.stamm.asset_type || "").toLowerCase() === next.toLowerCase()).map(t => t.id)
           : [];
-        Store.patchUi({ filterAsset: next, filterTag: "", selected: matchIds });
+        Store.patchUi({ filterAsset: next, filterTag: "", filterSector: "", filterMarketCapSize: "", selected: matchIds });
         Render.filterBar(); Render.bucket(); Render.bulkbar();
       });
     });
@@ -949,13 +1025,13 @@ const Render = {
         const matchIds = next
           ? Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket && (t.user.tags || []).includes(next)).map(t => t.id)
           : [];
-        Store.patchUi({ filterTag: next, filterAsset: "", selected: matchIds });
+        Store.patchUi({ filterTag: next, filterAsset: "", filterSector: "", filterMarketCapSize: "", selected: matchIds });
         Render.filterBar(); Render.bucket(); Render.bulkbar();
       });
     });
     const clr = host.querySelector("#filter-clear");
     if (clr) clr.addEventListener("click", () => {
-      Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
+      Store.patchUi({ filterAsset: "", filterTag: "", filterSector: "", filterMarketCapSize: "", selected: [] });
       Render.filterBar(); Render.bucket(); Render.bulkbar();
     });
   }
@@ -968,14 +1044,16 @@ const numFmt = (v, d = 2) => (v == null || isNaN(v)) ? "—"
   : Number(v).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d });
 const signCls = v => v == null ? "" : (v > 0 ? "pos" : v < 0 ? "neg" : "dim");
 
-/* ────────── visible rows: bucket + triggered + asset/tag filter ────────── */
+/* ────────── visible rows: bucket + triggered + asset/tag/sector/cap filter ────────── */
 function visibleRows() {
-  const { bucket, triggeredOnly, filterAsset, filterTag } = Store.state.ui;
+  const { bucket, triggeredOnly, filterAsset, filterTag, filterSector, filterMarketCapSize } = Store.state.ui;
   return Store.state.tickers
     .filter(t => t.user.bucket === bucket)
     .filter(t => !triggeredOnly || (t.calculations && t.calculations.trends && t.calculations.trends.alert_triggered))
-    .filter(t => !filterAsset || (t.stamm.asset_type || "").toLowerCase() === filterAsset.toLowerCase())
-    .filter(t => !filterTag || (t.user.tags || []).includes(filterTag))
+    .filter(t => !filterAsset  || (t.stamm.asset_type || "").toLowerCase() === filterAsset.toLowerCase())
+    .filter(t => !filterTag    || (t.user.tags || []).includes(filterTag))
+    .filter(t => !filterSector || (t.stamm.sector || "") === filterSector)
+    .filter(t => !filterMarketCapSize || getTickerMarketCapSize(t) === filterMarketCapSize)
     .map(flat);
 }
 
@@ -1070,9 +1148,104 @@ const COLS_TAIL = [
   { key:"sector",          label:"Sektor",  cell: t => t.sector || "—" }
 ];
 
+/* ────────── Technicals column set (screener data) ────────── */
+const COLS_TECHNICALS = [
+  { key:"sc_change_1w",      label:"1W %",          sortValue: t => t.screen?.['change|1W'],
+    cell: t => `<span class="${signCls(t.screen?.['change|1W'])}">${pctFmt(t.screen?.['change|1W'])}</span>` },
+  { key:"sc_change_1m",      label:"1M %",          sortValue: t => t.screen?.['change|1M'],
+    cell: t => `<span class="${signCls(t.screen?.['change|1M'])}">${pctFmt(t.screen?.['change|1M'])}</span>` },
+  { key:"sc_high_1m",        label:"High 1M",       sortValue: t => t.screen?.['High.1M'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['High.1M'])}</span>` },
+  { key:"sc_low_1m",         label:"Low 1M",        sortValue: t => t.screen?.['Low.1M'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['Low.1M'])}</span>` },
+  { key:"sc_52wh",           label:"52W H",         sortValue: t => t.screen?.['price_52_week_high'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['price_52_week_high'])}</span>` },
+  { key:"sc_52wl",           label:"52W T",         sortValue: t => t.screen?.['price_52_week_low'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['price_52_week_low'])}</span>` },
+  { key:"sc_high_all",       label:"High All",      sortValue: t => t.screen?.['High.All'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['High.All'])}</span>` },
+  { key:"sc_low_all",        label:"Low All",       sortValue: t => t.screen?.['Low.All'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['Low.All'])}</span>` },
+  { key:"sc_perf_all",       label:"Perf All",      sortValue: t => t.screen?.['Perf.All'],
+    cell: t => `<span class="${signCls(t.screen?.['Perf.All'])}">${pctFmt(t.screen?.['Perf.All'])}</span>` },
+  { key:"sc_rsi",            label:"RSI",           sortValue: t => t.screen?.['RSI'],
+    cell: t => numFmt(t.screen?.['RSI'], 1) },
+  { key:"sc_ema20",          label:"EMA20",         sortValue: t => t.screen?.['EMA20'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['EMA20'])}</span>` },
+  { key:"sc_ema50",          label:"EMA50",         sortValue: t => t.screen?.['EMA50'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['EMA50'])}</span>` },
+  { key:"sc_ema200",         label:"EMA200",        sortValue: t => t.screen?.['EMA200'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['EMA200'])}</span>` },
+  { key:"sc_macd",           label:"MACD",          sortValue: t => t.screen?.['MACD.macd'],
+    cell: t => `<span class="${signCls(t.screen?.['MACD.macd'])}">${numFmt(t.screen?.['MACD.macd'], 2)}</span>` },
+  { key:"sc_macd_sig",       label:"MACD Sig",      sortValue: t => t.screen?.['MACD.signal'],
+    cell: t => `<span class="${signCls(t.screen?.['MACD.signal'])}">${numFmt(t.screen?.['MACD.signal'], 2)}</span>` },
+  { key:"sc_adx",            label:"ADX",           sortValue: t => t.screen?.['ADX'],
+    cell: t => numFmt(t.screen?.['ADX'], 1) },
+  { key:"sc_cci_1m",         label:"CCI 1M",        sortValue: t => t.screen?.['CCI20|1M'],
+    cell: t => `<span class="${signCls(t.screen?.['CCI20|1M'])}">${numFmt(t.screen?.['CCI20|1M'], 1)}</span>` },
+  { key:"sc_aroon_up_120",   label:"Aroon↑ 120",   sortValue: t => t.screen?.['Aroon.Up|120'],
+    cell: t => numFmt(t.screen?.['Aroon.Up|120'], 1) },
+  { key:"sc_aroon_dn_120",   label:"Aroon↓ 120",   sortValue: t => t.screen?.['Aroon.Down|120'],
+    cell: t => numFmt(t.screen?.['Aroon.Down|120'], 1) },
+  { key:"sc_aroon_up_1m",    label:"Aroon↑ 1M",    sortValue: t => t.screen?.['Aroon.Up|1M'],
+    cell: t => numFmt(t.screen?.['Aroon.Up|1M'], 1) },
+  { key:"sc_aroon_dn_1m",    label:"Aroon↓ 1M",    sortValue: t => t.screen?.['Aroon.Down|1M'],
+    cell: t => numFmt(t.screen?.['Aroon.Down|1M'], 1) },
+  { key:"sc_donch_up_1m",    label:"Donch↑ 1M",    sortValue: t => t.screen?.['DonchCh20.Upper|1M'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['DonchCh20.Upper|1M'])}</span>` },
+  { key:"sc_donch_dn_1m",    label:"Donch↓ 1M",    sortValue: t => t.screen?.['DonchCh20.Lower|1M'],
+    cell: t => `<span class="dim">${numFmt(t.screen?.['DonchCh20.Lower|1M'])}</span>` },
+];
+
+/* ────────── Fundamentals column set (screener data) ────────── */
+const COLS_FUNDAMENTALS = [
+  { key:"sc_pe",             label:"KGV / P/E",     sortValue: t => t.screen?.['price_earnings_ttm'] ?? t.screen?.['KGV'],
+    cell: t => numFmt(t.screen?.['price_earnings_ttm'] ?? t.screen?.['KGV'], 1) },
+  { key:"sc_div",            label:"Dividende",     sortValue: t => t.screen?.['dividend_yield_recent'],
+    cell: t => `<span class="${signCls(t.screen?.['dividend_yield_recent'])}">${pctFmt(t.screen?.['dividend_yield_recent'])}</span>` },
+  { key:"sc_eps",            label:"EPS",           sortValue: t => t.screen?.['basic_eps_net_income'],
+    cell: t => numFmt(t.screen?.['basic_eps_net_income'], 2) },
+  { key:"sc_earn_date",      label:"Earnings",      sortValue: t => t.screen?.['earnings_release_next_date'],
+    cell: t => `<span class="dim">${fmtDate(t.screen?.['earnings_release_next_date'])}</span>` },
+  { key:"sc_ebitda",         label:"EBITDA",        sortValue: t => t.screen?.['ebitda'],
+    cell: t => `<span class="dim">${fmtMarketCap(t.screen?.['ebitda'])}</span>` },
+  { key:"sc_ebitda_gr",      label:"EBITDA YoY",    sortValue: t => t.screen?.['ebitda_yoy_growth_fy'],
+    cell: t => `<span class="${signCls(t.screen?.['ebitda_yoy_growth_fy'])}">${pctFmt(t.screen?.['ebitda_yoy_growth_fy'])}</span>` },
+  { key:"sc_gross_margin",   label:"Gross Margin",  sortValue: t => t.screen?.['gross_margin'],
+    cell: t => `<span class="${signCls(t.screen?.['gross_margin'])}">${pctFmt(t.screen?.['gross_margin'])}</span>` },
+  { key:"sc_gp_growth",      label:"GP YoY",        sortValue: t => t.screen?.['gross_profit_yoy_growth_fy'],
+    cell: t => `<span class="${signCls(t.screen?.['gross_profit_yoy_growth_fy'])}">${pctFmt(t.screen?.['gross_profit_yoy_growth_fy'])}</span>` },
+  { key:"sc_mom_1m",         label:"Mom 1M",        sortValue: t => t.screen?.['Mom|1M'],
+    cell: t => `<span class="${signCls(t.screen?.['Mom|1M'])}">${numFmt(t.screen?.['Mom|1M'], 2)}</span>` },
+  { key:"sc_volatility",     label:"Vola",          sortValue: t => t.screen?.['Volatility.D'],
+    cell: t => numFmt(t.screen?.['Volatility.D'], 2) },
+  { key:"sc_beta_1y",        label:"Beta 1J",       sortValue: t => t.screen?.['beta_1_year'],
+    cell: t => numFmt(t.screen?.['beta_1_year'], 2) },
+  { key:"sc_beta_3y",        label:"Beta 3J",       sortValue: t => t.screen?.['beta_3_year'],
+    cell: t => numFmt(t.screen?.['beta_3_year'], 2) },
+  { key:"sc_vol_10d",        label:"Ø Vol 10T",     sortValue: t => t.screen?.['average_volume_10d_calc'],
+    cell: t => `<span class="dim">${fmtMarketCap(t.screen?.['average_volume_10d_calc'])}</span>` },
+  { key:"sc_vol_30d",        label:"Ø Vol 30T",     sortValue: t => t.screen?.['average_volume_30d_calc'],
+    cell: t => `<span class="dim">${fmtMarketCap(t.screen?.['average_volume_30d_calc'])}</span>` },
+  { key:"sc_recommend",      label:"Empf. 1M",      sortValue: t => t.screen?.['Recommend.All|1M'],
+    cell: t => {
+      const v = t.screen?.['Recommend.All|1M'];
+      if (v == null || isNaN(v)) return "—";
+      const n = +v;
+      const label = n >= 0.5 ? "Str. Kauf" : n >= 0.1 ? "Kauf" : n <= -0.5 ? "Str. Verk." : n <= -0.1 ? "Verk." : "Neutral";
+      return `<span class="${signCls(n)}">${label} (${numFmt(n, 2)})</span>`;
+    }},
+];
+
 function columnsForBucket(bucket) {
-  if (bucket === "portfolio") return [...COLS_SELECT, ...COLS_BASE, ...COLS_PORTFOLIO_EXTRA, ...COLS_TAIL];
-  return [...COLS_SELECT, ...COLS_BASE, ...COLS_TAIL];
+  const { tableSection } = Store.state.ui;
+  const base = bucket === "portfolio"
+    ? [...COLS_SELECT, ...COLS_BASE, ...COLS_PORTFOLIO_EXTRA]
+    : [...COLS_SELECT, ...COLS_BASE];
+  if (tableSection === "technicals")   return [...base, ...COLS_TECHNICALS];
+  if (tableSection === "fundamentals") return [...base, ...COLS_FUNDAMENTALS];
+  return [...base, ...COLS_TAIL];
 }
 
 function renderTable() {
@@ -1569,8 +1742,17 @@ function openInfo(id) {
   const tr   = eff(t, "trend_reason");
   const why  = eff(t, "why_not");
 
+  const sc = t.screen || {};
+  const description = sc.description || null;
+  const industry    = sc.industry || null;
+  const mktCap      = sc.market_cap_basic != null ? sc.market_cap_basic : null;
+  const mktCapSize  = mktCap != null ? calcMarketCapSize(mktCap) : (s.market_cap_size || "—");
+
   $("#modal-info-body").innerHTML = `
-    <div class="modal__field"><label>Sektor / Typ</label><div>${s.sector || "—"} · ${s.asset_type || "—"} · ${s.market_cap_size || "—"}</div></div>
+    <div class="modal__field"><label>Sektor / Typ</label><div>${s.sector || "—"} · ${s.asset_type || "—"} · ${mktCapSize}</div></div>
+    ${industry ? `<div class="modal__field"><label>Industrie</label><div>${escapeHtml(industry)}</div></div>` : ""}
+    ${mktCap != null ? `<div class="modal__field"><label>Marktkapitalisierung</label><div>${fmtMarketCap(mktCap)}</div></div>` : ""}
+    ${description ? `<div class="modal__field"><label>Beschreibung</label><div class="modal__desc">${escapeHtml(description)}</div></div>` : ""}
     ${cb  ? `<div class="modal__field"><label>Geschäftsmodell</label><div>${escapeHtml(cb)}</div></div>` : ""}
     ${tr  ? `<div class="modal__field"><label>Trend-Grund</label><div>${escapeHtml(tr)}</div></div>` : ""}
     ${why ? `<div class="modal__field"><label>Why-Not</label><div>${escapeHtml(why)}</div></div>` : ""}
@@ -2156,6 +2338,12 @@ const USER_FIELDS = [
 /* fields that — when present at top-level of a flat import — belong in user not stamm */
 const FLAT_TO_USER = ["priority","bucket","notes","tags","entry_price_manual","entry_shares","scan_date","status"];
 
+/* keys that are structural or already handled — everything else goes to screen{} */
+const KNOWN_KEYS = new Set([
+  ...STAMM_FIELDS, ...USER_FIELDS, ...FLAT_TO_USER,
+  "id","stamm","user","quotes","calculations","screen","links","sources","sentiment"
+]);
+
 /* Helper: pluck a subset of fields out of an object, dropping null/undefined */
 function pluck(obj, keys) {
   const out = {};
@@ -2192,6 +2380,7 @@ function normalizeImportItem(raw) {
       id: raw.id || `${raw.stamm.symbol}_${raw.stamm.exchange || "X"}`,
       stamm: { ...raw.stamm },
       user:  raw.user  ? { ...raw.user }  : {},
+      screen: raw.screen ? { ...raw.screen } : {},
       quotes: raw.quotes ? { ...raw.quotes } : null
     };
   }
@@ -2202,18 +2391,21 @@ function normalizeImportItem(raw) {
   const stamm = pluck(raw, STAMM_FIELDS);
   const user  = pluck(raw, FLAT_TO_USER);
 
-  /* sentiment → not a schema-A field, but useful info: stash under user.tags or notes? 
-     We park it as a note tag, only when no notes already given. */
+  /* Capture all screener/discovery-specific fields not belonging to other slots */
+  const screen = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!KNOWN_KEYS.has(k) && v != null) screen[k] = v;
+  }
+
   if (raw.sentiment && !user.notes) {
     user.notes = `Sentiment: ${raw.sentiment}`;
   }
-
-  /* TD-Exchange fallback: trend-scout writes "twelvedata_exchange": "XETRA" or "Stockholm" — keep as is */
 
   return {
     id: `${stamm.symbol}_${stamm.exchange || "X"}`,
     stamm,
     user,
+    screen,
     quotes: null
   };
 }
@@ -2262,12 +2454,19 @@ function importJson(text) {
           if (v != null) existing.quotes[k] = v;
         }
       }
+      if (norm.screen && Object.keys(norm.screen).length) {
+        if (!existing.screen) existing.screen = {};
+        for (const [k, v] of Object.entries(norm.screen)) {
+          if (v != null) existing.screen[k] = v;
+        }
+      }
       Calc.recompute(existing);
       updated++;
     } else {
       const t = {
         id: norm.id,
         stamm: norm.stamm,
+        screen: norm.screen || {},
         user: Object.assign({
           marked_at: Date.now(), bucket: "neutral", priority: null, status: "aktiv",
           notes: "", tags: [], entry_price_manual: null, entry_shares: null,
@@ -2644,6 +2843,13 @@ function bindEvents() {
   // sub bar
   $("#btn-element-card-view") .addEventListener("click", () => { Store.patchUi({ view: "cards" }); Render.viewMode(); });
   $("#btn-element-table-view").addEventListener("click", () => { Store.patchUi({ view: "table" }); Render.viewMode(); });
+  // table section tabs (Standard / Technicals / Fundamentals)
+  $$(".segment__btn[data-section]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      Store.patchUi({ tableSection: btn.dataset.section });
+      Render.viewMode(); renderTable();
+    });
+  });
   $("#btn-element-refresh")     .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "flat" }));
   $("#btn-element-fullrefresh") .addEventListener("click", () => smartRefresh({ scope: "active", tdMode: "full" }));
 
