@@ -74,6 +74,7 @@ const Schema = {
     triggeredOnly: false,
     filterAsset:   "",           // "" | "ETF" | "Aktie" etc.
     filterTag:     "",           // "" | tag string
+    selectedOnly:  false,        // true = show only checked rows
     selected:    [],          // array of ticker ids
     editingId:   null,
     nachkaufId:  null
@@ -880,14 +881,14 @@ const Render = {
   filterBar() {
     const host = $("#filter-bar");
     if (!host) return;
-    const { filterAsset, filterTag } = Store.state.ui;
+    const { filterAsset, filterTag, selectedOnly, selected } = Store.state.ui;
     const assetTypes = _allAssetTypes();
     const tags = _allTags();
 
-    // "Alle wählen" checkbox state
+    // "Alle wählen" checkbox state (based on currently visible rows)
     const rows = visibleRows();
     const visIds = rows.map(r => r.id);
-    const selSet = new Set(Store.state.ui.selected);
+    const selSet = new Set(selected);
     const selCount = visIds.filter(id => selSet.has(id)).length;
     const allSel = selCount === visIds.length && visIds.length > 0;
     const someSel = selCount > 0 && !allSel;
@@ -902,7 +903,13 @@ const Render = {
       return `<button class="fpill fpill--tag${active}" data-filter-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
     }).join("");
 
-    const clearBtn = (filterAsset || filterTag)
+    // selection pill — appears as soon as ≥1 row is checked
+    const selPill = selected.length > 0
+      ? `<button class="fpill fpill--sel${selectedOnly ? " is-active" : ""}" id="fbar-sel-only" title="Nur Auswahl anzeigen">&#10003; ${selected.length} gewählt</button>`
+      : "";
+
+    const anyFilter = filterAsset || filterTag || selectedOnly;
+    const clearBtn = anyFilter
       ? `<button class="fpill fpill--clear" id="filter-clear" title="Filter zurücksetzen">&times;</button>` : "";
 
     host.innerHTML = `
@@ -910,18 +917,18 @@ const Render = {
         <input type="checkbox" id="fbar-select-all" ${allSel ? "checked" : ""} />
       </label>
       <span class="fpill-sep"></span>
+      ${selPill}${selPill && (assetPills || tagPills) ? `<span class="fpill-sep"></span>` : ""}
       ${assetPills}${tagPills ? `<span class="fpill-sep"></span>${tagPills}` : ""}${clearBtn}`;
 
-    // "Alle wählen" checkbox: select all visible OR clear pill filter and deselect all
+    // "Alle wählen" checkbox
     const selAllCb = host.querySelector("#fbar-select-all");
     if (selAllCb) {
       selAllCb.indeterminate = someSel;
       selAllCb.addEventListener("click", e => {
         e.stopPropagation();
-        if (filterAsset || filterTag) {
-          // clear pills and deselect all
-          Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
-          Render.filterBar(); Render.bucket();
+        if (anyFilter) {
+          Store.patchUi({ filterAsset: "", filterTag: "", selectedOnly: false, selected: [] });
+          Render.filterBar(); Render.bucket(); Render.bulkbar();
           return;
         }
         const shouldSel = selCount === 0;
@@ -932,31 +939,42 @@ const Render = {
       });
     }
 
-    // pill click → filter + select matching tickers + open bulkbar
+    // selection pill — toggle selectedOnly
+    const selOnlyBtn = host.querySelector("#fbar-sel-only");
+    if (selOnlyBtn) selOnlyBtn.addEventListener("click", () => {
+      Store.patchUi({ selectedOnly: !Store.state.ui.selectedOnly });
+      Render.filterBar(); Render.bucket();
+    });
+
+    // asset pill
     host.querySelectorAll("[data-filter-asset]").forEach(btn => {
       btn.addEventListener("click", () => {
         const next = filterAsset === btn.dataset.filterAsset ? "" : btn.dataset.filterAsset;
         const matchIds = next
           ? Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket && (t.stamm.asset_type || "").toLowerCase() === next.toLowerCase()).map(t => t.id)
           : [];
-        Store.patchUi({ filterAsset: next, filterTag: "", selected: matchIds });
+        Store.patchUi({ filterAsset: next, filterTag: "", selectedOnly: false, selected: matchIds });
         Render.filterBar(); Render.bucket(); Render.bulkbar();
       });
     });
+
+    // tag pill
     host.querySelectorAll("[data-filter-tag]").forEach(btn => {
       btn.addEventListener("click", () => {
         const next = filterTag === btn.dataset.filterTag ? "" : btn.dataset.filterTag;
         const matchIds = next
           ? Store.state.tickers.filter(t => t.user.bucket === Store.state.ui.bucket && (t.user.tags || []).includes(next)).map(t => t.id)
           : [];
-        Store.patchUi({ filterTag: next, filterAsset: "", selected: matchIds });
+        Store.patchUi({ filterTag: next, filterAsset: "", selectedOnly: false, selected: matchIds });
         Render.filterBar(); Render.bucket(); Render.bulkbar();
       });
     });
+
+    // clear all filters (keeps selection intact, just disables selectedOnly + other filters)
     const clr = host.querySelector("#filter-clear");
     if (clr) clr.addEventListener("click", () => {
-      Store.patchUi({ filterAsset: "", filterTag: "", selected: [] });
-      Render.filterBar(); Render.bucket(); Render.bulkbar();
+      Store.patchUi({ filterAsset: "", filterTag: "", selectedOnly: false });
+      Render.filterBar(); Render.bucket();
     });
   }
 };
@@ -968,14 +986,16 @@ const numFmt = (v, d = 2) => (v == null || isNaN(v)) ? "—"
   : Number(v).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d });
 const signCls = v => v == null ? "" : (v > 0 ? "pos" : v < 0 ? "neg" : "dim");
 
-/* ────────── visible rows: bucket + triggered + asset/tag filter ────────── */
+/* ────────── visible rows: bucket + triggered + asset/tag + selection filter ────────── */
 function visibleRows() {
-  const { bucket, triggeredOnly, filterAsset, filterTag } = Store.state.ui;
+  const { bucket, triggeredOnly, filterAsset, filterTag, selectedOnly, selected } = Store.state.ui;
+  const selSet = selectedOnly && selected.length > 0 ? new Set(selected) : null;
   return Store.state.tickers
     .filter(t => t.user.bucket === bucket)
     .filter(t => !triggeredOnly || (t.calculations && t.calculations.trends && t.calculations.trends.alert_triggered))
     .filter(t => !filterAsset || (t.stamm.asset_type || "").toLowerCase() === filterAsset.toLowerCase())
     .filter(t => !filterTag || (t.user.tags || []).includes(filterTag))
+    .filter(t => !selSet || selSet.has(t.id))
     .map(flat);
 }
 
@@ -2342,7 +2362,7 @@ function bulkDelete() {
   if (!ids.length) { toast("Nichts ausgewählt", "neg"); return; }
   if (!confirm(`${ids.length} Einträge wirklich löschen?`)) return;
   for (const id of ids) Store.remove(id);
-  Store.patchUi({ selected: [] });
+  Store.patchUi({ selected: [], selectedOnly: false });
   Render.bucket();
   Render.bulkbar();
   toast(`${ids.length} gelöscht`, "neg");
@@ -2665,12 +2685,12 @@ function bindEvents() {
   // bottom nav
   $("#nav-bottom-element-home").addEventListener("click", () => {
     const next = Store.state.ui.activeView === "portfolio" ? "screener" : "portfolio";
-    Store.patchUi({ triggeredOnly: false, selected: [] });
+    Store.patchUi({ triggeredOnly: false, selected: [], selectedOnly: false });
     switchView(next);
   });
   $("#nav-bottom-element-alert").addEventListener("click", openAlertsOverview);
   $("#nav-bottom-element-dropdown").addEventListener("change", e => {
-    Store.patchUi({ bucket: e.target.value, selected: [] });
+    Store.patchUi({ bucket: e.target.value, selected: [], selectedOnly: false });
     Render.bucket(); Render.bulkbar();
   });
 
@@ -3980,7 +4000,7 @@ async function smartRefresh(opts = {}) {
   } finally {
     Progress.clear();
     setRefreshLoading(false);
-    if (clearSel) { Store.patchUi({ selected: [] }); }
+    if (clearSel) { Store.patchUi({ selected: [], selectedOnly: false }); }
     Render.bulkbar();
   }
 }

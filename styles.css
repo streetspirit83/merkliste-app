@@ -189,6 +189,8 @@ input, textarea, select { font: inherit; color: inherit; }
 [data-theme="dark"] .fpill--tag.is-active { background: #1063C9; border-color: #1063C9; color: #e6edf3; }
 .fpill--clear { background: transparent; border-color: var(--neg); color: var(--neg); font-weight: 700; padding: 2px 8px; }
 .fpill--clear:hover { background: var(--neg); color: #fff; }
+.fpill--sel { border-color: var(--text); color: var(--text); font-weight: 700; }
+.fpill--sel.is-active { background: var(--text); color: var(--bg); border-color: var(--text); }
 .fpill-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
 
 /* ────── bulk bar (sticky strip over bottom-nav, conditional) ────── */
