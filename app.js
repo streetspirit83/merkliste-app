@@ -1036,6 +1036,45 @@ function _potentialStatus(alerts) {
   return "watch";
 }
 
+/* Status → Richtung (Buy/Watch/Sell) für die Tabellen-Textanzeige */
+const STATUS_DIR = {
+  stop_loss: "sell", kursziel: "sell", verkauf: "sell", momentum_neg: "sell",
+  kauf: "buy", momentum_pos: "buy", watch: "watch",
+};
+const DIR_LABEL = { buy: "Buy", sell: "Sell", watch: "Watch" };
+
+/* Kurzlabel je Alert-Typ (geteilt mit alertChips) */
+const ALERT_SHORT_LBL = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×", perf_below:"Perf ≤", perf_above:"Perf ≥" };
+
+/* Dominanter Alert — gleiche Priorität wie _potentialStatus/computeStatus */
+function _dominantAlert(alerts) {
+  if (!alerts || !alerts.length) return null;
+  const f = pred => alerts.find(pred);
+  return f(a => (a.type === "price_below" || a.type === "perf_below") && alertDir(a) === "sell")
+      || f(a => a.type === "perf_above" && alertDir(a) === "sell")
+      || f(a => MOMENTUM_NEG.has(a.type))
+      || f(a => alertDir(a) === "sell")
+      || f(a => MOMENTUM_POS.has(a.type))
+      || f(a => alertDir(a) === "buy")
+      || alerts[0];
+}
+
+/* Konkreter Trigger-Preis/-Wert eines Alerts als Kurztext */
+function _fmtTrigger(a) {
+  if (!a) return "";
+  if (a.type === "ma_below_pct" || a.type === "ma_above_pct") {
+    const sign = a.type === "ma_above_pct" ? "+" : "−";
+    return `${a.type === "ma_above_pct" ? ">" : "<"}${(a.ma || "ma50").toUpperCase()} ${sign}${a.threshold}%`;
+  }
+  if (a.type === "perf_below") return `Perf ≤ −${a.threshold}%`;
+  if (a.type === "perf_above") return `Perf ≥ +${a.threshold}%`;
+  if (ALERT_NO_THRESHOLD.has(a.type) || a.threshold == null) return ALERT_SHORT_LBL[a.type] || a.type;
+  const v = (a.type === "rsi_above" || a.type === "rsi_below") ? a.threshold
+          : a.type === "vol_spike" ? `${a.threshold}×Ø`
+          : numFmt(a.threshold);
+  return `${ALERT_SHORT_LBL[a.type] || a.type} ${v}`;
+}
+
 /* ────────── table columns ────────── */
 const COLS_SELECT = [
   { key:"__select", label:`<input type="checkbox" id="tbl-select-all" aria-label="Alle wählen" />`,
@@ -1045,14 +1084,24 @@ const COLS_SELECT = [
 const COLS_BASE = [
   { key:"status_key", label:"Status", cls:"col-status", noSort:true,
     cell: t => {
-      if (t.status_key !== "halten")
-        return statusIcon(t.status_key, t.status_label);
+      if (t.status_key !== "halten") {
+        const dir = STATUS_DIR[t.status_key] || "watch";
+        return `<span class="status-txt status-txt--${dir}" title="${t.status_label}">${DIR_LABEL[dir]}</span>`;
+      }
       const pot = t.alerts?.length ? _potentialStatus(t.alerts) : null;
-      if (pot && pot !== "watch")
-        return statusIcon(pot, `Setup: ${STATUS_MAP[pot]?.label || pot}`, true);
-      if (pot === "watch")
-        return `<span class="status-chip status-chip--dim" title="Watch"><i data-lucide="bookmark" class="icon icon-sm"></i></span>`;
-      return "";
+      if (pot) {
+        const dir = STATUS_DIR[pot] || "watch";
+        return `<span class="status-txt status-txt--${dir} is-setup" title="Setup: ${STATUS_MAP[pot]?.label || pot}">${DIR_LABEL[dir]}</span>`;
+      }
+      return `<span class="dim">—</span>`;
+    }},
+  { key:"trigger", label:"Trigger", cls:"col-trigger", noSort:true,
+    cell: t => {
+      const evald = (t.smart_alerts && t.smart_alerts.length) ? t.smart_alerts : (t.alerts || []);
+      if (!evald.length) return `<span class="dim">—</span>`;
+      const live = t.status_key !== "halten" ? evald.filter(a => a._trig) : [];
+      const txt = _fmtTrigger(_dominantAlert(live.length ? live : evald));
+      return txt ? `<span class="trigger-val">${txt}</span>` : `<span class="dim">—</span>`;
     }},
   { key:"symbol", label:"Symbol", cls:"col-sym",
     cell: t => `<span class="sym-strong">${t.symbol}</span><span class="sym-sub">${t.exchange||""}</span>` },
@@ -1192,7 +1241,7 @@ function trendBar(v) { if (v == null) v = 0; const n = Math.max(0, Math.min(10, 
 function alertChips(t, inline) {
   const alerts = t.smart_alerts && t.smart_alerts.length ? t.smart_alerts : t.alerts.map(a => ({...a, _trig:false}));
   if (!alerts.length) return "";
-  const lblMap = { price_below:"≤", price_above:"≥", rsi_above:"RSI>", rsi_below:"RSI<", ma20_below:"<MA20", ma50_below:"<MA50", ma200_below:"<MA200", macd_bullish:"MACD↑", macd_bearish:"MACD↓", reversal_up_short:"↑MACD", reversal_down_short:"↓MACD", reversal_up_long:"↑MA200", reversal_down_long:"↓MA200", vol_spike:"VOL×", perf_below:"Perf ≤", perf_above:"Perf ≥" };
+  const lblMap = ALERT_SHORT_LBL;
   // EUR-konvertierte Quotes für korrekte Distanzberechnung
   const q = t._raw ? {
     ...t._raw.quotes,
