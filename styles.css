@@ -853,6 +853,23 @@ tr.quote-updated td   { animation: quote-flash-row 1.2s ease-out forwards; }
 .pf-wf-bar.neg { background: var(--neg); opacity: .7; }
 .pf-wf-val { font-family: var(--font-mono); font-size: var(--fs-l); text-align: right; }
 
+/* 21-day momentum vs. target */
+.pf-mom { display: flex; flex-direction: column; gap: 6px; }
+.pf-mom-note { font-family: var(--font-sans); font-weight: var(--fw-b); font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--muted); margin-left: auto; }
+.pf-mom-row { display: grid; grid-template-columns: 54px 1fr 52px 78px; align-items: center; gap: 6px; }
+.pf-mom-sym { font-family: var(--font-sans); font-weight: var(--fw-h); font-size: var(--fs-l); }
+.pf-mom-track { position: relative; height: 12px; background: var(--surface); border-radius: 3px; }
+.pf-mom-bar { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+.pf-mom-bar.pos { background: var(--pos); opacity: .75; }
+.pf-mom-bar.neg { background: var(--neg); opacity: .75; }
+.pf-mom-bar--muted { background: var(--muted); opacity: .35; }
+.pf-mom-zero { position: absolute; top: -1px; bottom: -1px; width: 1px; background: var(--neg); opacity: .55; }
+.pf-mom-marker { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); opacity: .7; border-radius: 1px; }
+.pf-mom-val { font-family: var(--font-mono); font-size: var(--fs-l); text-align: right; }
+.pf-mom-target { font-family: var(--font-sans); font-size: var(--fs-l); color: var(--muted); display: flex; align-items: center; gap: 3px; justify-content: flex-end; white-space: nowrap; }
+.pf-mom-target-lbl { font-size: 10px; }
+.pf-mom-input { width: 34px; font-family: var(--font-mono); font-size: var(--fs-l); background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 3px; text-align: center; color: var(--text); }
+
 /* RSI-Sentiment scatter */
 .pf-scatter-wrap { width: 100%; background: var(--surface); border-radius: var(--r); padding: var(--s-1) 0; }
 
