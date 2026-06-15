@@ -777,6 +777,7 @@ function flat(t) {
     stocktwits_url: s.stocktwits_url || `https://stocktwits.com/symbol/${s.symbol}`,
     bucket: u.bucket, priority: u.priority, notes: u.notes, tags: u.tags,
     entry_price_manual: u.entry_price_manual, entry_shares: u.entry_shares,
+    target_pct: u.target_pct ?? null, trades: u.trades || [],
     alerts: u.alerts || [],
     price, currency_returned: displayCcy, day_change_pct: q.day_change_pct, month_change_pct: q.month_change_pct ?? null,
     volume: q.volume, avg_volume: q.avg_volume,
@@ -2837,6 +2838,75 @@ function updatePromptText() {
   $("#info-prompt-text").value = fillPrompt(prompt.template, _currentInfoTicker);
 }
 
+/* ── 21-day momentum vs. target ──
+   Bar = performance since entry (entry → current price); vertical marker = per-position
+   target (default 20 %, editable). Anchor for the holding window is the last buy date;
+   the bar stays greyed until ≥ PF_MOM_HOLD_MIN trading days have elapsed. */
+const PF_MOM_HOLD_MIN = 21;
+const PF_MOM_TARGET_DEFAULT = 20;
+
+function _lastBuyDate(trades) {
+  const dates = (trades || []).filter(tr => tr.type === "buy" && tr.date).map(tr => tr.date);
+  return dates.length ? dates.sort().pop() : null;
+}
+
+function _tradingDaysSince(dateStr) {
+  if (!dateStr) return null;
+  const start = new Date(dateStr + "T00:00:00");
+  if (isNaN(start)) return null;
+  const today = new Date();
+  let count = 0;
+  const d = new Date(start);
+  while (d < today) {
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
+function pfMomentumBars(positions) {
+  const rows = [...positions]
+    .filter(t => t.performance_pct != null)
+    .sort((a, b) => (b.performance_pct || 0) - (a.performance_pct || 0));
+  if (!rows.length) return "";
+
+  const targetOf = t => (t.target_pct != null ? t.target_pct : PF_MOM_TARGET_DEFAULT);
+  const perfs  = rows.map(t => t.performance_pct);
+  const maxPos = Math.max(PF_MOM_TARGET_DEFAULT, ...rows.map(targetOf), ...perfs.filter(v => v > 0));
+  const maxNeg = Math.max(0, ...perfs.filter(v => v < 0).map(v => -v));
+  const span   = (maxNeg + maxPos) || 1;
+  const zeroPct = maxNeg / span * 100;
+
+  return `<div class="pf-section">
+    <div class="pf-section__title">Performance vs. Ziel <span class="pf-mom-note">21T · ab letztem Kauf</span></div>
+    <div class="pf-mom">
+      ${rows.map(t => {
+        const perf   = t.performance_pct;
+        const target = targetOf(t);
+        const held   = _tradingDaysSince(_lastBuyDate(t.trades));
+        const active = held != null && held >= PF_MOM_HOLD_MIN;
+        const barCls = !active ? "pf-mom-bar--muted" : (perf >= 0 ? "pos" : "neg");
+        const barW   = Math.abs(perf) / span * 100;
+        const barLeft = perf >= 0 ? zeroPct : zeroPct - barW;
+        const markerLeft = zeroPct + target / span * 100;
+        const valCls = active ? signCls(perf) : "dim";
+        const heldTxt = held == null ? "kein Kaufdatum hinterlegt" : `${held}/${PF_MOM_HOLD_MIN} Handelstage gehalten`;
+        return `<div class="pf-mom-row" title="${heldTxt}">
+          <span class="pf-mom-sym">${t.symbol}</span>
+          <div class="pf-mom-track">
+            <div class="pf-mom-zero" style="left:${zeroPct.toFixed(2)}%"></div>
+            <div class="pf-mom-bar ${barCls}" style="left:${barLeft.toFixed(2)}%;width:${Math.max(barW, 0.4).toFixed(2)}%"></div>
+            <div class="pf-mom-marker" style="left:${markerLeft.toFixed(2)}%"></div>
+          </div>
+          <span class="pf-mom-val ${valCls}">${signedNum(perf, 1, "%")}</span>
+          <span class="pf-mom-target"><span class="pf-mom-target-lbl">Ziel</span><input class="pf-mom-input" data-id="${t.id}" type="number" step="any" min="0" value="${target}"/>%</span>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
 function pfWaterfall(positions) {
   const sorted = [...positions].sort((a, b) => (b.position_pl_abs || 0) - (a.position_pl_abs || 0));
   const maxAbs = Math.max(...sorted.map(t => Math.abs(t.position_pl_abs || 0)), 0.01);
@@ -3073,6 +3143,7 @@ function renderPortfolioPerf() {
       </div>
       <div class="pf-treemap-wrap" id="pf-treemap-host">${_pfTreemapSVG(positions, _pfTreemapFilter)}</div>
     </div>
+    ${positions.length ? pfMomentumBars(positions) : ""}
     ${assetSplit}
     ${positions.length ? pfWaterfall(positions) : ""}
     ${positions.length ? pfScatterMatrix(positions) : ""}
@@ -3081,6 +3152,17 @@ function renderPortfolioPerf() {
   host.querySelectorAll("[data-pf-tm]").forEach(btn => {
     btn.addEventListener("click", () => {
       _pfTreemapFilter = btn.dataset.pfTm;
+      renderPortfolioPerf();
+    });
+  });
+  host.querySelectorAll(".pf-mom-input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const tk = Store.byId(inp.dataset.id);
+      if (tk) {
+        const v = inp.value === "" ? null : +inp.value;
+        tk.user.target_pct = (v == null || isNaN(v)) ? null : Math.max(0, v);
+        Store.save();
+      }
       renderPortfolioPerf();
     });
   });
