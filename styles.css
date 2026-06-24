@@ -305,7 +305,7 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ────── bottom nav ────── */
 .botnav {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.4fr;
+  grid-template-columns: 1fr 1fr 1fr 1.4fr;
   align-items: center;
   border-top: 1px solid var(--surface);
   background: var(--bg);
@@ -323,6 +323,7 @@ input, textarea, select { font: inherit; color: inherit; }
   gap: 2px;
   color: var(--muted);
   border-radius: var(--r);
+  text-decoration: none;
 }
 .botnav__btn:hover { background: var(--surface); }
 .botnav__btn[aria-current="true"] { color: var(--text); }
