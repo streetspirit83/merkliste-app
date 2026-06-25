@@ -2400,8 +2400,12 @@ function importJson(text, { silent = false } = {}) {
   if (updated) parts.push(`${updated} aktualisiert`);
   if (skipped) parts.push(`${skipped} ignoriert${skippedSyms.length ? " ("+skippedSyms.slice(0,3).join(", ")+(skippedSyms.length>3?"…":"")+")" : ""}`);
   const msg = parts.length ? "Import: " + parts.join(", ") : "Import: nichts importiert";
-  if (silent) { if (added + updated) console.log("[discovery:onload] " + msg); }
-  else        toast(msg, (added + updated) > 0 ? "pos" : "neg");
+  if (silent) {
+    if (added + updated) console.log("[discovery:onload] " + msg);
+    if (added) toast(`Discovery: ${added} neu importiert`, "pos");   // brief confirmation on onload
+  } else {
+    toast(msg, (added + updated) > 0 ? "pos" : "neg");
+  }
 }
 
 /* ─── EXPORT JSON (selection → clipboard) ─── */
@@ -4201,12 +4205,16 @@ function init() {
      and Yahoo stays available as a manual fallback (e.g. for ETFs). The rate must be
      loaded before the discovery import so native→EUR conversion is correct. */
   (async () => {
-    await loadBlob({ silent: true });
-    if (!Store.state.config.eur_usd) {
-      const ok = await API.fetchEurUsdViaYahoo();
-      if (ok) Calc.recomputeAll();
+    try {
+      await loadBlob({ silent: true });
+      if (!Store.state.config.eur_usd) {
+        const ok = await API.fetchEurUsdViaYahoo().catch(() => false);
+        if (ok) Calc.recomputeAll();
+      }
+      await importFromDiscovery(null, { silent: true });
+    } catch (err) {
+      console.warn("[init:sync]", err);
     }
-    await importFromDiscovery(null, { silent: true });
     Render.all();
   })();
   /* Auto-Refresh on load deaktiviert — manuell via ⟳ Buttons */
