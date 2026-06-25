@@ -2236,6 +2236,43 @@ function pluck(obj, keys) {
 /* Screener-Discovery candidate → flat import shape.
    Lifts nested links/sources into known top-level fields so the generic
    flat-import path can pick them up. Non-destructive (shallow copy). */
+/* Map a discovery candidate's live data → merkliste `quotes` (stored in EUR).
+   Price = Lang & Schwarz (already EUR); everything else = TradingView, converted
+   native→EUR via the cached rate so the whole quote is one currency (EUR). */
+function buildDiscoveryQuotes(c) {
+  const tv = c.tv_data, ls = c.ls_quote;
+  const hasLs = ls && ls.price != null;
+  if (!tv && !hasLs) return null;
+
+  const rate = Store.state.config.eur_usd;                 // USD per 1 EUR
+  const ccy  = String(c.currency || "").toUpperCase();      // native currency from discovery
+  const toEur = (v) => (v == null ? null : (ccy === "USD" && rate ? +(v / rate).toFixed(4) : v));
+  const pct   = (a, b) => (a != null && b != null && b !== 0 ? +(((a - b) / b) * 100).toFixed(2) : null);
+
+  const price = hasLs ? ls.price : toEur(tv?.close_1m ?? tv?.close);
+  const ma20  = toEur(tv?.ema20), ma50 = toEur(tv?.ema50), ma200 = toEur(tv?.ema200);
+  const macd  = toEur(tv?.macd), macd_signal = toEur(tv?.macd_signal);
+  const macd_histogram = (tv?.macd != null && tv?.macd_signal != null) ? toEur(tv.macd - tv.macd_signal) : null;
+
+  return {
+    price,
+    currency_returned: "EUR",                               // whole quote is EUR now
+    day_change_pct:   ls?.change_pct ?? tv?.change_1d ?? null,
+    month_change_pct: tv?.change_1m ?? tv?.perf_1m ?? null,
+    volume:     tv?.average_volume ?? tv?.avg_vol_10d ?? null,
+    avg_volume: tv?.avg_vol_10d ?? tv?.average_volume ?? null,
+    high_52w: toEur(tv?.price_52_week_high),
+    low_52w:  toEur(tv?.price_52_week_low),
+    rsi: tv?.rsi ?? null,
+    macd, macd_signal, macd_histogram,
+    ma20,  ma20_delta_pct:  pct(price, ma20),
+    ma50,  ma50_delta_pct:  pct(price, ma50),
+    ma200, ma200_delta_pct: pct(price, ma200),
+    ts: Date.now(),
+    _source: "discovery",
+  };
+}
+
 function flattenDiscoveryCandidate(c) {
   const out = { ...c };
   if (c.links) {
@@ -2246,14 +2283,15 @@ function flattenDiscoveryCandidate(c) {
     const snippets = [...new Set(c.sources.map(s => s && s.info_snippet).filter(Boolean))];
     if (snippets.length && out.trend_reason == null) out.trend_reason = snippets.join(" · ");
   }
+  out.quotes = buildDiscoveryQuotes(c);   // current price (LS) + indicators (TV), in EUR
   return out;
 }
 
 function normalizeImportItem(raw) {
   if (!raw || typeof raw !== "object") return null;
 
-  /* Screener-Discovery candidate: flatten nested links/sources first */
-  if (!raw.stamm && (raw.links || raw.sources)) raw = flattenDiscoveryCandidate(raw);
+  /* Screener-Discovery candidate: flatten nested links/sources + map tv_data/ls_quote → quotes */
+  if (!raw.stamm && (raw.links || raw.sources || raw.tv_data || raw.ls_quote)) raw = flattenDiscoveryCandidate(raw);
 
   /* Shape 1: Schema A — already has stamm */
   if (raw.stamm && typeof raw.stamm === "object") {
@@ -2284,7 +2322,7 @@ function normalizeImportItem(raw) {
     id: `${stamm.symbol}_${stamm.exchange || "X"}`,
     stamm,
     user,
-    quotes: null
+    quotes: raw.quotes ? { ...raw.quotes } : null
   };
 }
 
@@ -4156,17 +4194,21 @@ function init() {
   setInterval(() => Progress.renderIdle(), 1000);
   Progress.renderIdle();
   console.log("[init] ready", Store.state);
-  /* Hybrid sync: load from cloud silently, then pull the discovery export on top
-     (discovery = primary source for the ticker set + stammdaten; the safe merge in
-     importJson preserves user data like entry_price_manual / alerts). */
-  loadBlob({ silent: true }).then(() => importFromDiscovery(null, { silent: true }));
-  /* Auto-fetch EUR/USD via Yahoo proxy so conversion works after cache clear.
-     Re-render once the rate arrives, since init() already rendered synchronously. */
-  if (!Store.state.config.eur_usd) {
-    API.fetchEurUsdViaYahoo().then(ok => {
-      if (ok) { Calc.recomputeAll(); Render.all(); }
-    });
-  }
+  /* Hybrid sync: cloud load → ensure EUR/USD rate → pull discovery export on top.
+     Discovery is the primary source for the ticker set, stammdaten AND live quotes
+     (price from Lang & Schwarz in EUR, indicators from TradingView converted to EUR).
+     The safe merge in importJson preserves user data (entry_price_manual / alerts),
+     and Yahoo stays available as a manual fallback (e.g. for ETFs). The rate must be
+     loaded before the discovery import so native→EUR conversion is correct. */
+  (async () => {
+    await loadBlob({ silent: true });
+    if (!Store.state.config.eur_usd) {
+      const ok = await API.fetchEurUsdViaYahoo();
+      if (ok) Calc.recomputeAll();
+    }
+    await importFromDiscovery(null, { silent: true });
+    Render.all();
+  })();
   /* Auto-Refresh on load deaktiviert — manuell via ⟳ Buttons */
 }
 // ES modules are deferred — DOM is already parsed when this runs
