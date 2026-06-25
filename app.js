@@ -2226,6 +2226,11 @@ const USER_FIELDS = [
 /* fields that — when present at top-level of a flat import — belong in user not stamm */
 const FLAT_TO_USER = ["priority","bucket","notes","tags","entry_price_manual","entry_shares","scan_date","status"];
 
+/* identity / fetch-config stamm fields — never overwritten in update-only (enrich) mode,
+   so a discovery match can't break merkliste's own Yahoo/TD fetch config */
+const IDENTITY_STAMM = new Set(["symbol","exchange","currency","yahoo_symbol",
+  "twelvedata_symbol","twelvedata_mic_code","twelvedata_exchange","asset_type"]);
+
 /* Helper: pluck a subset of fields out of an object, dropping null/undefined */
 function pluck(obj, keys) {
   const out = {};
@@ -2326,7 +2331,7 @@ function normalizeImportItem(raw) {
   };
 }
 
-function importJson(text, { silent = false } = {}) {
+function importJson(text, { silent = false, updateOnly = false } = {}) {
   let parsed;
   try { parsed = JSON.parse(text); }
   catch (err) { if (!silent) toast("JSON ungültig: " + err.message, "neg"); return; }
@@ -2354,12 +2359,19 @@ function importJson(text, { silent = false } = {}) {
       continue;
     }
 
-    const existing = Store.byId(norm.id);
+    /* match existing ticker by id, else by SYMBOL (exchanges differ between the apps) */
+    let existing = Store.byId(norm.id);
+    if (!existing && norm.stamm?.symbol) {
+      const sym = String(norm.stamm.symbol).toUpperCase();
+      existing = Store.state.tickers.find(t => String(t.stamm?.symbol || "").toUpperCase() === sym);
+    }
     if (existing) {
-      /* merge: only overwrite stamm fields that are actually present in import,
-         keep existing data (e.g. earlier news arrays) intact otherwise */
+      /* merge: only overwrite stamm fields present in import. In update-only (enrich)
+         mode, never touch identity/fetch-config fields so merkliste keeps fetching. */
       for (const [k, v] of Object.entries(norm.stamm)) {
-        if (v != null) existing.stamm[k] = v;
+        if (v == null) continue;
+        if (updateOnly && IDENTITY_STAMM.has(k)) continue;
+        existing.stamm[k] = v;
       }
       /* user block: shallow-merge defined fields only, never wipe entry_price_manual etc. */
       for (const [k, v] of Object.entries(norm.user || {})) {
@@ -2373,6 +2385,7 @@ function importJson(text, { silent = false } = {}) {
       Calc.recompute(existing);
       updated++;
     } else {
+      if (updateOnly) { skipped++; continue; }   // enrich matches only — never add new tickers
       const t = {
         id: norm.id,
         stamm: norm.stamm,
@@ -2401,8 +2414,11 @@ function importJson(text, { silent = false } = {}) {
   if (skipped) parts.push(`${skipped} ignoriert${skippedSyms.length ? " ("+skippedSyms.slice(0,3).join(", ")+(skippedSyms.length>3?"…":"")+")" : ""}`);
   const msg = parts.length ? "Import: " + parts.join(", ") : "Import: nichts importiert";
   if (silent) {
-    if (added + updated) console.log("[discovery:onload] " + msg);
-    if (added) toast(`Discovery: ${added} neu importiert`, "pos");   // brief confirmation on onload
+    if (added + updated) {
+      console.log("[discovery:onload] " + msg);
+      const conf = [added && `${added} neu`, updated && `${updated} aktualisiert`].filter(Boolean).join(", ");
+      toast("Discovery: " + conf, "pos");   // brief confirmation on onload
+    }
   } else {
     toast(msg, (added + updated) > 0 ? "pos" : "neg");
   }
@@ -2647,7 +2663,7 @@ async function loadBlob({ silent = true } = {}) {
 }
 
 /* ─── DISCOVERY IMPORT (Screener-Discovery export via proxy function) ─── */
-async function importFromDiscovery(btn, { silent = false } = {}) {
+async function importFromDiscovery(btn, { silent = false, updateOnly = false } = {}) {
   if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
   try {
     const res = await fetch(CONFIG.discovery.endpoint, { method: "GET" });
@@ -2661,7 +2677,7 @@ async function importFromDiscovery(btn, { silent = false } = {}) {
                : Array.isArray(data)             ? data
                : null;
     if (!list || !list.length) { if (!silent) toast("Keine Discovery-Kandidaten gefunden", "neg"); return; }
-    importJson(JSON.stringify(data), { silent });   // reuse unified import path (unwraps candidates)
+    importJson(JSON.stringify(data), { silent, updateOnly });   // reuse unified import path (unwraps candidates)
   } catch (err) {
     if (!silent) toast("Discovery-Import fehlgeschlagen: " + err.message, "neg");
     console.warn("[discovery:import]", err);
@@ -4211,7 +4227,7 @@ function init() {
         const ok = await API.fetchEurUsdViaYahoo().catch(() => false);
         if (ok) Calc.recomputeAll();
       }
-      await importFromDiscovery(null, { silent: true });
+      await importFromDiscovery(null, { silent: true, updateOnly: true });
     } catch (err) {
       console.warn("[init:sync]", err);
     }
