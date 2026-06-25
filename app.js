@@ -2288,10 +2288,10 @@ function normalizeImportItem(raw) {
   };
 }
 
-function importJson(text) {
+function importJson(text, { silent = false } = {}) {
   let parsed;
   try { parsed = JSON.parse(text); }
-  catch (err) { toast("JSON ungültig: " + err.message, "neg"); return; }
+  catch (err) { if (!silent) toast("JSON ungültig: " + err.message, "neg"); return; }
 
   /* unwrap supported envelope shapes */
   let items;
@@ -2362,7 +2362,8 @@ function importJson(text) {
   if (updated) parts.push(`${updated} aktualisiert`);
   if (skipped) parts.push(`${skipped} ignoriert${skippedSyms.length ? " ("+skippedSyms.slice(0,3).join(", ")+(skippedSyms.length>3?"…":"")+")" : ""}`);
   const msg = parts.length ? "Import: " + parts.join(", ") : "Import: nichts importiert";
-  toast(msg, (added + updated) > 0 ? "pos" : "neg");
+  if (silent) { if (added + updated) console.log("[discovery:onload] " + msg); }
+  else        toast(msg, (added + updated) > 0 ? "pos" : "neg");
 }
 
 /* ─── EXPORT JSON (selection → clipboard) ─── */
@@ -2604,7 +2605,7 @@ async function loadBlob({ silent = true } = {}) {
 }
 
 /* ─── DISCOVERY IMPORT (Screener-Discovery export via proxy function) ─── */
-async function importFromDiscovery(btn) {
+async function importFromDiscovery(btn, { silent = false } = {}) {
   if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
   try {
     const res = await fetch(CONFIG.discovery.endpoint, { method: "GET" });
@@ -2617,10 +2618,10 @@ async function importFromDiscovery(btn) {
     const list = Array.isArray(data?.candidates) ? data.candidates
                : Array.isArray(data)             ? data
                : null;
-    if (!list || !list.length) { toast("Keine Discovery-Kandidaten gefunden", "neg"); return; }
-    importJson(JSON.stringify(data));   // reuse unified import path (unwraps candidates)
+    if (!list || !list.length) { if (!silent) toast("Keine Discovery-Kandidaten gefunden", "neg"); return; }
+    importJson(JSON.stringify(data), { silent });   // reuse unified import path (unwraps candidates)
   } catch (err) {
-    toast("Discovery-Import fehlgeschlagen: " + err.message, "neg");
+    if (!silent) toast("Discovery-Import fehlgeschlagen: " + err.message, "neg");
     console.warn("[discovery:import]", err);
   } finally {
     if (btn) { btn.classList.remove("is-loading"); btn.disabled = false; }
@@ -4155,8 +4156,10 @@ function init() {
   setInterval(() => Progress.renderIdle(), 1000);
   Progress.renderIdle();
   console.log("[init] ready", Store.state);
-  /* Hybrid sync: load from cloud silently in background, merge if newer */
-  loadBlob({ silent: true });
+  /* Hybrid sync: load from cloud silently, then pull the discovery export on top
+     (discovery = primary source for the ticker set + stammdaten; the safe merge in
+     importJson preserves user data like entry_price_manual / alerts). */
+  loadBlob({ silent: true }).then(() => importFromDiscovery(null, { silent: true }));
   /* Auto-fetch EUR/USD via Yahoo proxy so conversion works after cache clear.
      Re-render once the rate arrives, since init() already rendered synchronously. */
   if (!Store.state.config.eur_usd) {
