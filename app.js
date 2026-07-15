@@ -2663,10 +2663,13 @@ async function loadBlob({ silent = true } = {}) {
 }
 
 /* ─── DISCOVERY IMPORT (Screener-Discovery export via proxy function) ─── */
-async function importFromDiscovery(btn, { silent = false, updateOnly = false } = {}) {
+async function importFromDiscovery(btn, { silent = false, updateOnly = false, scope = null } = {}) {
   if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
   try {
-    const res = await fetch(CONFIG.discovery.endpoint, { method: "GET" });
+    /* scope=live → Union aller Live-Buckets (Onload-Kurs-Refresh, update-only);
+       ohne scope → nur Export-Bucket (manueller Import, legt neu an). */
+    const ep = scope ? `${CONFIG.discovery.endpoint}?scope=${encodeURIComponent(scope)}` : CONFIG.discovery.endpoint;
+    const res = await fetch(ep, { method: "GET" });
     if (!res.ok) {
       let detail = "";
       try { detail = (await res.json()).error || ""; } catch { /* non-JSON (z.B. GitHub-Pages 404) */ }
@@ -4214,12 +4217,14 @@ function init() {
   setInterval(() => Progress.renderIdle(), 1000);
   Progress.renderIdle();
   console.log("[init] ready", Store.state);
-  /* Hybrid sync: cloud load → ensure EUR/USD rate → pull discovery export on top.
-     Discovery is the primary source for the ticker set, stammdaten AND live quotes
+  /* Hybrid sync: cloud load → ensure EUR/USD rate → pull discovery LIVE union on top.
+     scope=live = union of discovery inbox+watch+export, so every tracked ticker gets
+     re-priced no matter which bucket it currently sits in (the manual import button
+     stays scoped to the Export bucket). Discovery is the primary source for live quotes
      (price from Lang & Schwarz in EUR, indicators from TradingView converted to EUR).
-     The safe merge in importJson preserves user data (entry_price_manual / alerts),
-     and Yahoo stays available as a manual fallback (e.g. for ETFs). The rate must be
-     loaded before the discovery import so native→EUR conversion is correct. */
+     update-only: the safe merge in importJson only touches existing tickers and never
+     wipes user data (entry_price_manual / alerts); Yahoo stays a manual fallback (ETFs).
+     The rate must be loaded before the import so native→EUR conversion is correct. */
   (async () => {
     try {
       await loadBlob({ silent: true });
@@ -4227,7 +4232,7 @@ function init() {
         const ok = await API.fetchEurUsdViaYahoo().catch(() => false);
         if (ok) Calc.recomputeAll();
       }
-      await importFromDiscovery(null, { silent: true, updateOnly: true });
+      await importFromDiscovery(null, { silent: true, updateOnly: true, scope: "live" });
     } catch (err) {
       console.warn("[init:sync]", err);
     }

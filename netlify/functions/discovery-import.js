@@ -6,11 +6,16 @@
  * JSON durch. Server-seitiger Fetch vermeidet CORS-Probleme und hält die
  * Quell-URL geheim (Env-Var statt im Client-Code).
  *
+ * Ein optionaler ?scope=live wird an den Upstream durchgereicht: der manuelle
+ * Import lässt ihn weg (→ nur Export-Bucket, legt neu an), der Onload-Kurs-
+ * Refresh setzt scope=live (→ Union inbox+watch+export, aktualisiert nur
+ * bereits getrackte Ticker).
+ *
  * Env: DISCOVERY_EXPORT_URL — voll qualifizierte URL des Export-Endpoints,
  *      z.B. https://screener-discovery.netlify.app/.netlify/functions/discovery-export
  */
 
-export default async () => {
+export default async (req) => {
   const url = process.env.DISCOVERY_EXPORT_URL;
   if (!url) {
     return new Response(
@@ -19,8 +24,14 @@ export default async () => {
     );
   }
 
+  // scope=live (nur dieser Wert) an den Upstream weiterreichen.
+  const scope = new URL(req.url).searchParams.get("scope");
+  const upstream = scope === "live"
+    ? `${url}${url.includes("?") ? "&" : "?"}scope=live`
+    : url;
+
   try {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const res = await fetch(upstream, { headers: { Accept: "application/json" } });
     if (!res.ok) {
       return new Response(
         JSON.stringify({ error: `Discovery HTTP ${res.status}` }),
