@@ -2,7 +2,9 @@
  * portfolio-value.js — Gesamtwert des Portfolios als JSON
  * GET → {
  *   gesamtwert, investiert, pl_abs, pl_pct, waehrung: "EUR",
- *   positionen, live_kurse, fallback_kurse, eur_usd, stand
+ *   positionen, live_kurse, fallback_kurse, ohne_kurs, eur_usd, stand,
+ *   split: { ETF, Aktie },                       // Wert je Typ in EUR
+ *   werte: [{ symbol, name, typ, stueck, kurs, wert, einstand, pl_abs, pl_pct, quelle }]
  * }
  *
  * Rechnet wie die Portfolio-Übersicht im Browser (renderPortfolioPerf / Calc.position):
@@ -46,6 +48,14 @@ async function yahooMeta(symbol) {
     finally { clearTimeout(timer); }
   }
   return null;
+}
+
+/* Typ für den ETF/Aktien-Split: stamm.asset_type, sonst Heuristik über den Namen */
+function assetTyp(t) {
+  const raw = (t.stamm?.asset_type || "").trim();
+  if (/etf|etc|fonds|fund/i.test(raw)) return "ETF";
+  if (raw) return "Aktie";
+  return /\b(etf|ucits|ishares|xtrackers|vanguard|amundi|spdr|msci)\b/i.test(t.stamm?.name || "") ? "ETF" : "Aktie";
 }
 
 /* gleiche Heuristik wie API._guessYahooSymbol im Browser */
@@ -103,21 +113,31 @@ export default async (req) => {
   }
 
   let wert = 0, kosten = 0, live = 0, fallback = 0, ohneKurs = 0;
+  const werte = [], split = { ETF: 0, Aktie: 0 };
+  const r2 = v => +v.toFixed(2);
   for (const t of held) {
     const m = metas[t.id];
     let raw = m?.regularMarketPrice ?? null;
     let ccy = m?.currency || null;
+    let quelle = "live";
     if (raw != null) live++;
     else {
       raw = t.quotes?.price ?? null;
       if (raw == null) { ohneKurs++; continue; }
-      fallback++;
+      fallback++; quelle = "fallback";
     }
     ccy = ccy || t.quotes?.currency_returned || t.stamm?.currency || "";
     const price = (ccy === "USD" && eurUsd) ? raw / eurUsd : raw;
-    wert += price * t.user.entry_shares;
-    kosten += t.user.entry_price_manual * t.user.entry_shares;
+    const sh = t.user.entry_shares, ep = t.user.entry_price_manual;
+    const w = price * sh, k = ep * sh, typ = assetTyp(t);
+    wert += w; kosten += k; split[typ] += w;
+    werte.push({
+      symbol: t.stamm?.symbol || null, name: t.stamm?.name || null, typ,
+      stueck: sh, kurs: r2(price), wert: r2(w), einstand: r2(k),
+      pl_abs: r2(w - k), pl_pct: k > 0 ? r2(((w - k) / k) * 100) : null, quelle,
+    });
   }
+  werte.sort((a, b) => b.wert - a.wert);
 
   const pl = wert - kosten;
   return json({
@@ -132,6 +152,8 @@ export default async (req) => {
     ohne_kurs: ohneKurs,
     eur_usd: eurUsd,
     stand: new Date().toISOString(),
+    split: { ETF: r2(split.ETF), Aktie: r2(split.Aktie) },
+    werte,
   }, 200, { "Cache-Control": "public, max-age=300" });
 };
 
