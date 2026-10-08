@@ -1663,7 +1663,11 @@ function openEdit(id) {
   $("#modal-edit-title").textContent = `${t.stamm.symbol} · Bearbeiten`;
   $("#edit-bucket").value   = t.user.bucket || "neutral";
   $("#edit-priority").value = t.user.priority || "";
-  $("#edit-entry-price").value  = t.user.entry_price_manual != null ? t.user.entry_price_manual : "";
+  const curType = t.stamm.asset_type || "";
+  const typeSel = $("#edit-asset-type");
+  if (curType && ![...typeSel.options].some(o => o.value === curType)) typeSel.add(new Option(curType, curType));
+  typeSel.value = curType;
+  $("#edit-entry-price").value = t.user.entry_price_manual != null ? t.user.entry_price_manual : "";
   $("#edit-entry-shares").value = t.user.entry_shares != null ? t.user.entry_shares : "";
   $("#edit-notes").value = t.user.notes || "";
   renderTagEditor(t.user.tags || []);
@@ -1995,7 +1999,8 @@ function saveEdit() {
   const t = Store.byId(id); if (!t) return;
   t.user.bucket   = $("#edit-bucket").value;
   t.user.priority = $("#edit-priority").value || null;
-  const ep = $("#edit-entry-price").value;
+  t.stamm.asset_type = $("#edit-asset-type").value || null;
+  const ep= $("#edit-entry-price").value;
   t.user.entry_price_manual = ep === "" ? null : +ep;
   const sh = $("#edit-entry-shares").value;
   t.user.entry_shares = sh === "" ? null : +sh;
